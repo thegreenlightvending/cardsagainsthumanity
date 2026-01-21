@@ -141,13 +141,24 @@ export default function GamePage() {
       await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
       console.log("✓ Room set to playing");
 
-      // 2. Set first player as judge
-      console.log("2. Setting judge...");
+      // 2. DEAL BLACK CARD FIRST - This starts the active round immediately
+      console.log("2. Dealing black card to start active round...");
+      const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
+      console.log("Black cards found:", blackCards?.length);
+      if (!blackCards || blackCards.length === 0) {
+        throw new Error("No black cards found");
+      }
+      
+      const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
+      console.log("Selected black card:", randomBlackCard.id);
+
+      // 3. Set first player as judge
+      console.log("3. Setting judge...");
       await supabase.from("room_players").update({ is_judge: false }).eq("room_id", roomId);
       await supabase.from("room_players").update({ is_judge: true }).eq("room_id", roomId).eq("profile_id", players[0].profile_id);
       console.log("✓ Judge set:", players[0].profiles?.username);
 
-      // 3. Deal 10 cards to each player
+      // 4. Deal 10 cards to each player
       console.log("3. Dealing cards...");
       await supabase.from("player_hands").delete().eq("room_id", roomId);
       
@@ -174,17 +185,8 @@ export default function GamePage() {
       await supabase.from("player_hands").insert(hands);
       console.log("✓ Cards dealt to all players");
 
-      // 4. START ACTIVE ROUND - Deal black card (this begins the round)
-      console.log("4. Creating active round with black card...");
-      const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
-      console.log("Black cards found:", blackCards?.length);
-      if (!blackCards || blackCards.length === 0) {
-        throw new Error("No black cards found");
-      }
-      
-      const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
-      console.log("Selected black card:", randomBlackCard.id);
-      
+      // 5. CREATE ACTIVE ROUND with the black card we selected
+      console.log("5. Creating active round with selected black card...");
       const { data: insertedRound, error: roundError } = await supabase.from("rounds").insert({
         room_id: parseInt(roomId),
         black_card_id: randomBlackCard.id,
@@ -194,9 +196,9 @@ export default function GamePage() {
       
       console.log("Round creation result:", { insertedRound, roundError });
       if (roundError) throw roundError;
-      console.log("✓ Active round created!");
+      console.log("✓ Active round created with black card!");
 
-      // 5. Refresh game data
+      // 6. Refresh game data
       console.log("5. Refreshing game data...");
       await loadGameData();
       console.log("✓ Game data refreshed");
