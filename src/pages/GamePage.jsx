@@ -116,23 +116,43 @@ export default function GamePage() {
     try {
       setError("Starting game...");
       
+      // First, reload player data to ensure we have current players
+      const { data: currentPlayers, error: playersError } = await supabase
+        .from("room_players")
+        .select("*, profiles(username)")
+        .eq("room_id", roomId)
+        .order("joined_at");
+      
+      if (playersError) {
+        throw new Error("Failed to load players: " + playersError.message);
+      }
+      
+      if (!currentPlayers || currentPlayers.length === 0) {
+        throw new Error("No players found in room");
+      }
+      
+      if (currentPlayers.length < 3) {
+        throw new Error("Need at least 3 players to start");
+      }
+      
+      // Update players state
+      setPlayers(currentPlayers);
+      
       // Update room status
       await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
       
       // Set first player as judge
-      if (players.length > 0) {
-        await supabase
-          .from("room_players")
-          .update({ is_judge: true })
-          .eq("room_id", roomId)
-          .eq("profile_id", players[0].profile_id);
-      }
+      await supabase
+        .from("room_players")
+        .update({ is_judge: true })
+        .eq("room_id", roomId)
+        .eq("profile_id", currentPlayers[0].profile_id);
       
       // Deal cards to all players
-      await dealCards();
+      await dealCards(currentPlayers);
       
       // Create first round
-      await createRound();
+      await createRound(currentPlayers);
       
       // Refresh game data to show the new round
       await loadGameData();
@@ -145,7 +165,7 @@ export default function GamePage() {
     }
   }
 
-  async function dealCards() {
+  async function dealCards(playersToUse = players) {
     // Clear existing hands first
     await supabase
       .from("player_hands")
@@ -162,7 +182,7 @@ export default function GamePage() {
       throw new Error("No white cards found");
     }
 
-    if (whiteCards.length < players.length * 10) {
+    if (whiteCards.length < playersToUse.length * 10) {
       throw new Error("Not enough cards for all players");
     }
 
@@ -173,11 +193,11 @@ export default function GamePage() {
     const hands = [];
     let cardIndex = 0;
     
-    for (let i = 0; i < players.length; i++) {
+    for (let i = 0; i < playersToUse.length; i++) {
       for (let j = 0; j < 10; j++) {
         hands.push({
           room_id: roomId,
-          profile_id: players[i].profile_id,
+          profile_id: playersToUse[i].profile_id,
           white_card_id: shuffled[cardIndex].id
         });
         cardIndex++;
@@ -189,7 +209,7 @@ export default function GamePage() {
     if (error) throw error;
   }
 
-  async function createRound() {
+  async function createRound(playersToUse = players) {
     // Get random black card
     const { data: blackCards } = await supabase
       .from("black_cards")
@@ -201,7 +221,7 @@ export default function GamePage() {
     }
 
     const randomCard = blackCards[Math.floor(Math.random() * blackCards.length)];
-    const judge = players.find(p => p.is_judge);
+    const judge = playersToUse.find(p => p.is_judge);
 
     if (!judge) {
       throw new Error("No judge found");
@@ -469,12 +489,17 @@ export default function GamePage() {
               <div className="text-center py-12">
                 <h2 className="text-2xl font-bold mb-4">Waiting for Game</h2>
                 <p className="text-zinc-400 mb-6">Need at least 3 players to start</p>
-                {isHost && players.length >= 3 && (
+                {isHost && (
                   <button
                     onClick={startGame}
-                    className="px-6 py-3 bg-green-600 rounded-lg hover:bg-green-500 font-bold"
+                    disabled={players.length < 3}
+                    className={`px-6 py-3 rounded-lg font-bold ${
+                      players.length >= 3
+                        ? "bg-green-600 hover:bg-green-500"
+                        : "bg-gray-600 cursor-not-allowed opacity-50"
+                    }`}
                   >
-                    Start Game
+                    {players.length >= 3 ? "Start Game" : `Need ${3 - players.length} more players`}
                   </button>
                 )}
               </div>
