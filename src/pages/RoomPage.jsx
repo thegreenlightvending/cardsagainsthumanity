@@ -338,97 +338,27 @@ export default function RoomPage() {
       }
 
       console.log("Selecting winner:", submissionId);
-      await selectWinner(currentRound.id, submissionId, user.id);
-      setError("Winner selected! Starting next round...");
+      setError("Winner selected! Next round starting automatically...");
       
-      // Start next round after a short delay
+      await selectWinner(currentRound.id, submissionId, user.id);
+      
+      // Reload game state after automatic progression
       setTimeout(async () => {
-        await startNextRound();
-        loadRoomData();
-        loadCurrentRound();
-        loadPlayerHand();
-      }, 3000);
+        await loadRoomData();
+        await loadCurrentRound();
+        await loadPlayerHand();
+        await loadPlayers();
+        await loadSubmissions();
+        setError("New round started!");
+        setTimeout(() => setError(""), 2000);
+      }, 2000);
     } catch (err) {
       console.error("Winner selection error:", err);
       setError("Failed to select winner: " + err.message);
     }
   }
 
-  async function startNextRound() {
-    try {
-      // Get current players and rotate judge
-      const nonJudgePlayers = players.filter(p => !p.is_judge);
-      const currentJudge = players.find(p => p.is_judge);
-      
-      if (nonJudgePlayers.length === 0) return;
-      
-      // Find next judge (rotate)
-      const currentJudgeIndex = players.findIndex(p => p.profile_id === currentJudge.profile_id);
-      const nextJudgeIndex = (currentJudgeIndex + 1) % players.length;
-      const nextJudge = players[nextJudgeIndex];
-
-      // Update judge
-      await supabase
-        .from("room_players")
-        .update({ is_judge: false })
-        .eq("room_id", roomId);
-
-      await supabase
-        .from("room_players")
-        .update({ is_judge: true })
-        .eq("room_id", roomId)
-        .eq("profile_id", nextJudge.profile_id);
-
-      // Deal new cards to players who need them (should have 7)
-      await dealNewCards();
-
-      // Start new round
-      await startNewRound(roomId, room.deck_id, nextJudge.profile_id);
-    } catch (err) {
-      console.error("Failed to start next round:", err);
-    }
-  }
-
-  async function dealNewCards() {
-    try {
-      // Check each player's hand and deal cards to get back to 7
-      for (const player of players) {
-        const { data: hand } = await supabase
-          .from("player_hands")
-          .select("id")
-          .eq("room_id", roomId)
-          .eq("profile_id", player.profile_id);
-
-        const cardsNeeded = 7 - (hand?.length || 0);
-        
-        if (cardsNeeded > 0) {
-          // Get random white cards
-          const { data: availableCards } = await supabase
-            .from("white_cards")
-            .select("id")
-            .eq("deck_id", room.deck_id)
-            .limit(cardsNeeded * 2); // Get extra to avoid duplicates
-
-          if (availableCards && availableCards.length > 0) {
-            const shuffled = availableCards.sort(() => Math.random() - 0.5);
-            const cardsToAdd = shuffled.slice(0, cardsNeeded);
-
-            const newCards = cardsToAdd.map(card => ({
-              room_id: roomId,
-              profile_id: player.profile_id,
-              white_card_id: card.id
-            }));
-
-            await supabase
-              .from("player_hands")
-              .insert(newCards);
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Failed to deal new cards:", err);
-    }
-  }
+  // Removed manual next round logic - now handled automatically in selectWinner
 
   async function leaveRoom() {
     try {
@@ -759,7 +689,7 @@ export default function RoomPage() {
                 {/* Player Hand (show if game is playing and not judge) */}
                 {room.status === "playing" && !players.find(p => p.profile_id === user.id)?.is_judge && (
                   <div>
-                    <h3 className="font-bold mb-3 text-center">Your Hand ({playerHand.length} cards)</h3>
+                    <h3 className="font-bold mb-3 text-center">Your Hand ({playerHand.length}/10 cards)</h3>
                     {playerHand.length === 0 ? (
                       <div className="text-center text-zinc-400 py-8">
                         <p>No cards in hand</p>

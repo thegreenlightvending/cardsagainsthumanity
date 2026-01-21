@@ -91,8 +91,8 @@ async function dealCardsToPlayers(roomId, deckId, players) {
   // Shuffle cards
   const shuffledCards = [...whiteCards].sort(() => Math.random() - 0.5);
 
-  // Deal 7 cards to each player
-  const cardsPerPlayer = 7;
+  // Deal 10 cards to each player (official CAH rules)
+  const cardsPerPlayer = 10;
   const hands = [];
 
   console.log("Dealing cards to", players.length, "players");
@@ -215,14 +215,19 @@ export async function submitCard(roundId, profileId, whiteCardId) {
 
 export async function selectWinner(roundId, winningSubmissionId, judgeId) {
   try {
-    // Get the winning submission
+    console.log("Selecting winner:", winningSubmissionId, "by judge:", judgeId);
+
+    // Get the winning submission with room info
     const { data: submission, error: submissionError } = await supabase
       .from("submissions")
-      .select("profile_id")
+      .select("profile_id, round_id, rounds(room_id)")
       .eq("id", winningSubmissionId)
       .single();
 
     if (submissionError) throw submissionError;
+
+    const roomId = submission.rounds.room_id;
+    console.log("Winner is:", submission.profile_id, "in room:", roomId);
 
     // Update the round with winner
     const { error: roundError } = await supabase
@@ -237,18 +242,178 @@ export async function selectWinner(roundId, winningSubmissionId, judgeId) {
 
     if (roundError) throw roundError;
 
-    // Update winner's score
+    // Update winner's score (they get the black card as a point)
     const { error: scoreError } = await supabase
       .rpc("increment_player_score", {
-        room_uuid: submission.room_id,
+        room_uuid: roomId,
         player_uuid: submission.profile_id
       });
 
     if (scoreError) throw scoreError;
+
+    // Replenish all players' hands back to 10 cards
+    await replenishAllPlayerHands(roomId);
+
+    // Rotate judge to next player
+    await rotateJudge(roomId);
+
+    // Start next round automatically
+    const { data: newJudge } = await supabase
+      .from("room_players")
+      .select("profile_id")
+      .eq("room_id", roomId)
+      .eq("is_judge", true)
+      .single();
+
+    if (newJudge) {
+      const { data: room } = await supabase
+        .from("rooms")
+        .select("deck_id")
+        .eq("id", roomId)
+        .single();
+
+      if (room) {
+        await createNewRound(roomId, room.deck_id, newJudge.profile_id);
+        console.log("Next round started automatically");
+      }
+    }
 
     return { success: true };
   } catch (error) {
     console.error("Error selecting winner:", error);
     throw error;
   }
+}
+
+async function replenishAllPlayerHands(roomId) {
+  console.log("Replenishing all player hands to 10 cards");
+  
+  // Get all players in room
+  const { data: players, error: playersError } = await supabase
+    .from("room_players")
+    .select("profile_id")
+    .eq("room_id", roomId);
+
+  if (playersError) throw playersError;
+
+  // Get room's deck
+  const { data: room, error: roomError } = await supabase
+    .from("rooms")
+    .select("deck_id")
+    .eq("id", roomId)
+    .single();
+
+  if (roomError) throw roomError;
+
+  // Replenish each player's hand to 10 cards
+  for (const player of players) {
+    const { data: currentHand, error: handError } = await supabase
+      .from("player_hands")
+      .select("id")
+      .eq("room_id", roomId)
+      .eq("profile_id", player.profile_id);
+
+    if (handError) throw handError;
+
+    const cardsNeeded = 10 - (currentHand?.length || 0);
+    
+    if (cardsNeeded > 0) {
+      // Get random white cards
+      const { data: availableCards, error: cardsError } = await supabase
+        .from("white_cards")
+        .select("id")
+        .eq("deck_id", room.deck_id)
+        .limit(cardsNeeded * 3); // Get extra to avoid duplicates
+
+      if (cardsError) throw cardsError;
+
+      if (availableCards && availableCards.length > 0) {
+        const shuffled = availableCards.sort(() => Math.random() - 0.5);
+        const cardsToAdd = shuffled.slice(0, cardsNeeded);
+
+        const newCards = cardsToAdd.map(card => ({
+          room_id: roomId,
+          profile_id: player.profile_id,
+          white_card_id: card.id
+        }));
+
+        const { error: insertError } = await supabase
+          .from("player_hands")
+          .insert(newCards);
+
+        if (insertError) throw insertError;
+      }
+    }
+  }
+  
+  console.log("All hands replenished to 10 cards");
+}
+
+async function rotateJudge(roomId) {
+  console.log("Rotating judge");
+  
+  // Get all players in order
+  const { data: players, error: playersError } = await supabase
+    .from("room_players")
+    .select("profile_id, is_judge")
+    .eq("room_id", roomId)
+    .order("joined_at");
+
+  if (playersError) throw playersError;
+
+  // Find current judge
+  const currentJudgeIndex = players.findIndex(p => p.is_judge);
+  const nextJudgeIndex = (currentJudgeIndex + 1) % players.length;
+  const nextJudge = players[nextJudgeIndex];
+
+  // Clear all judges
+  const { error: clearError } = await supabase
+    .from("room_players")
+    .update({ is_judge: false })
+    .eq("room_id", roomId);
+
+  if (clearError) throw clearError;
+
+  // Set new judge
+  const { error: setError } = await supabase
+    .from("room_players")
+    .update({ is_judge: true })
+    .eq("room_id", roomId)
+    .eq("profile_id", nextJudge.profile_id);
+
+  if (setError) throw setError;
+
+  console.log("New judge:", nextJudge.profile_id);
+}
+
+async function createNewRound(roomId, deckId, judgeId) {
+  console.log("Starting new round with judge:", judgeId);
+  
+  // Get a random black card
+  const { data: blackCards, error: blackCardsError } = await supabase
+    .from("black_cards")
+    .select("id")
+    .eq("deck_id", deckId);
+
+  if (blackCardsError) throw blackCardsError;
+
+  if (!blackCards || blackCards.length === 0) {
+    throw new Error("No black cards found for this deck");
+  }
+
+  const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
+
+  // Create the round
+  const { error: roundError } = await supabase
+    .from("rounds")
+    .insert({
+      room_id: roomId,
+      black_card_id: randomBlackCard.id,
+      judge_profile_id: judgeId,
+      status: "submitting"
+    });
+
+  if (roundError) throw roundError;
+  
+  console.log("New round created successfully");
 }
