@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../auth/AuthProvider";
+import { ensureUserProfile } from "../utils/profileUtils";
 
 export default function JoinRoomPage() {
   const navigate = useNavigate();
@@ -54,25 +55,7 @@ export default function JoinRoomPage() {
 
     try {
       // Ensure user has a profile
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("id", user.id)
-        .single();
-
-      if (profileError && profileError.code === 'PGRST116') {
-        const { error: insertError } = await supabase
-          .from("profiles")
-          .insert({
-            id: user.id,
-            username: user.user_metadata?.username || user.email?.split('@')[0] || 'Player',
-            is_guest: user.is_anonymous || false
-          });
-        
-        if (insertError) throw insertError;
-      } else if (profileError) {
-        throw profileError;
-      }
+      await ensureUserProfile(user);
 
       // Check if room exists and get details
       let query = supabase

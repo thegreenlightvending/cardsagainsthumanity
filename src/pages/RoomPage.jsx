@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../auth/AuthProvider";
+import { ensureUserProfile } from "../utils/profileUtils";
 
 export default function RoomPage() {
   const { roomId } = useParams();
@@ -119,26 +120,7 @@ export default function RoomPage() {
 
     try {
       // Ensure user has a profile first
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("id", user.id)
-        .single();
-
-      if (profileError && profileError.code === 'PGRST116') {
-        // Create profile if it doesn't exist
-        const { error: insertError } = await supabase
-          .from("profiles")
-          .insert({
-            id: user.id,
-            username: user.user_metadata?.username || user.email?.split('@')[0] || 'Player',
-            is_guest: user.is_anonymous || false
-          });
-        
-        if (insertError) throw insertError;
-      } else if (profileError) {
-        throw profileError;
-      }
+      await ensureUserProfile(user);
 
       const { error } = await supabase
         .from("messages")
