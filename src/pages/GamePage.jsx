@@ -134,6 +134,9 @@ export default function GamePage() {
       // Create first round
       await createRound();
       
+      // Refresh game data to show the new round
+      await loadGameData();
+      
       setError("Game started!");
       setTimeout(() => setError(""), 2000);
     } catch (err) {
@@ -166,7 +169,7 @@ export default function GamePage() {
     // Shuffle cards
     const shuffled = [...whiteCards].sort(() => Math.random() - 0.5);
 
-    // Deal 10 cards to each player
+    // Deal 10 cards to EVERY player (including judge)
     const hands = [];
     let cardIndex = 0;
     
@@ -489,47 +492,82 @@ export default function GamePage() {
                     </div>
                     <p className="text-zinc-400">
                       {submissions.length} / {players.filter(p => !p.is_judge).length} cards submitted
+                      {submissions.length === players.filter(p => !p.is_judge).length && (
+                        <span className="text-yellow-400 ml-2">• Judge is choosing winner...</span>
+                      )}
                     </p>
                   </div>
                 )}
 
                 {/* Player Hand */}
-                {!isJudge && playerHand.length > 0 && (
+                {playerHand.length > 0 && (
                   <div>
-                    <h3 className="font-bold mb-3">Your Cards ({playerHand.length})</h3>
+                    <h3 className="font-bold mb-3">
+                      Your Cards ({playerHand.length})
+                      {isJudge && <span className="text-purple-400 ml-2">(You are the Judge)</span>}
+                    </h3>
                     <div className="grid grid-cols-2 gap-3">
                       {playerHand.map((card) => (
                         <button
                           key={card.id}
-                          onClick={() => submitCard(card.white_card_id)}
-                          disabled={hasSubmitted}
-                          className="bg-white text-black p-3 rounded text-sm hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          onClick={() => !isJudge && submitCard(card.white_card_id)}
+                          disabled={isJudge || hasSubmitted}
+                          className={`p-3 rounded text-sm ${
+                            isJudge 
+                              ? "bg-gray-600 text-gray-300 cursor-not-allowed" 
+                              : "bg-white text-black hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          }`}
                         >
                           {card.white_cards?.text}
                         </button>
                       ))}
                     </div>
-                    {hasSubmitted && (
+                    {hasSubmitted && !isJudge && (
                       <p className="text-green-400 text-center mt-3">✓ Card submitted!</p>
+                    )}
+                    {isJudge && (
+                      <p className="text-purple-400 text-center mt-3">You are judging this round</p>
                     )}
                   </div>
                 )}
 
-                {/* Judge View */}
-                {isJudge && submissions.length === players.filter(p => !p.is_judge).length && (
+                {/* Submissions Area */}
+                {isJudge && (
                   <div>
-                    <h3 className="font-bold mb-3">Choose Winner</h3>
-                    <div className="grid grid-cols-1 gap-3">
-                      {submissions.map((submission) => (
-                        <button
-                          key={submission.id}
-                          onClick={() => selectWinner(submission.id)}
-                          className="bg-white text-black p-3 rounded text-left hover:bg-yellow-100"
-                        >
-                          {submission.white_cards?.text}
-                        </button>
-                      ))}
-                    </div>
+                    <h3 className="font-bold mb-3">
+                      Submitted Cards ({submissions.length} / {players.filter(p => !p.is_judge).length})
+                    </h3>
+                    {submissions.length === 0 && (
+                      <p className="text-zinc-400 text-center py-6">Waiting for players to submit cards...</p>
+                    )}
+                    {submissions.length > 0 && submissions.length < players.filter(p => !p.is_judge).length && (
+                      <div className="space-y-2">
+                        <p className="text-zinc-400 text-center">Cards submitted so far:</p>
+                        {submissions.map((submission, index) => (
+                          <div key={submission.id} className="bg-white text-black p-3 rounded opacity-75">
+                            Card #{index + 1}: {submission.white_cards?.text}
+                          </div>
+                        ))}
+                        <p className="text-yellow-400 text-center">Waiting for more submissions...</p>
+                      </div>
+                    )}
+                    {submissions.length === players.filter(p => !p.is_judge).length && (
+                      <div>
+                        <p className="text-green-400 text-center mb-4">All cards submitted! Choose the winner:</p>
+                        <div className="grid grid-cols-1 gap-3">
+                          {submissions.map((submission, index) => (
+                            <button
+                              key={submission.id}
+                              onClick={() => selectWinner(submission.id)}
+                              className="bg-white text-black p-4 rounded text-left hover:bg-yellow-100 border-2 border-transparent hover:border-yellow-400"
+                            >
+                              <div className="font-bold mb-1">Card #{index + 1}</div>
+                              <div>{submission.white_cards?.text}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
