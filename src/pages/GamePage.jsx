@@ -93,8 +93,13 @@ export default function GamePage() {
           setCurrentRound(roundData[0]);
           setHasActiveRound(true);
         } else {
+          // Only clear currentRound, but don't reset hasActiveRound if it was just set
+          // hasActiveRound will be managed by createActiveRound and selectWinner
           setCurrentRound(null);
-          setHasActiveRound(false);
+          // Only set to false if room is not playing (game hasn't started)
+          if (roomData?.status !== "playing") {
+            setHasActiveRound(false);
+          }
         }
         // Load player hand
         const { data: handData } = await supabase
@@ -498,6 +503,12 @@ export default function GamePage() {
                       {submissions.length === players.filter(p => !p.is_judge).length && (
                         <p className="text-yellow-400 mt-2">Judge is choosing winner!</p>
                       )}
+                      {/* DEBUG: Show active round status */}
+                      <div className="mt-3 text-xs text-zinc-500">
+                        DEBUG: hasActiveRound={hasActiveRound ? "true" : "false"} | 
+                        currentRound={currentRound ? "exists" : "null"} | 
+                        roomStatus={room?.status}
+                      </div>
                     </div>
                   </div>
                 </div>
