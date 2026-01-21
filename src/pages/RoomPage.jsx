@@ -61,7 +61,7 @@ export default function RoomPage() {
     
     loadRoomData();
     
-    // Poll for updates every 2 seconds (more reliable than real-time for now)
+    // Poll for updates every 1 second for better responsiveness
     const pollInterval = setInterval(() => {
       loadMessages();
       loadPlayers();
@@ -70,7 +70,7 @@ export default function RoomPage() {
         loadPlayerHand();
         loadSubmissions();
       }
-    }, 2000);
+    }, 1000);
 
     return () => {
       clearInterval(pollInterval);
@@ -182,12 +182,44 @@ export default function RoomPage() {
       setError("Starting game...");
       console.log("Starting game with roomId:", roomId, "deckId:", room.deck_id);
       
-      const result = await startGame(roomId, room.deck_id);
-      console.log("Game start result:", result);
+      // Try the full game start
+      try {
+        const result = await startGame(roomId, room.deck_id);
+        console.log("Game start result:", result);
+        setError("Game started! Round should be active...");
+      } catch (gameStartError) {
+        console.error("Full game start failed:", gameStartError);
+        setError("Game start failed, trying manual round creation...");
+        
+        // Fallback: manually start a round if game start failed
+        try {
+          // Make sure room is in playing status
+          await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
+          
+          // Make sure first player is judge
+          if (players.length > 0) {
+            await supabase
+              .from("room_players")
+              .update({ is_judge: false })
+              .eq("room_id", roomId);
+            
+            await supabase
+              .from("room_players")
+              .update({ is_judge: true })
+              .eq("room_id", roomId)
+              .eq("profile_id", players[0].profile_id);
+          }
+          
+          // Start a round manually
+          await startNewRound(roomId, room.deck_id, players[0].profile_id);
+          setError("Game started with manual round creation!");
+        } catch (fallbackError) {
+          console.error("Fallback failed:", fallbackError);
+          setError("Game start failed completely: " + fallbackError.message);
+        }
+      }
       
-      setError("Game started! Loading round...");
-      
-      // Reload all game data with longer delay
+      // Reload all game data
       setTimeout(async () => {
         console.log("Reloading game data after start...");
         await loadRoomData();
@@ -467,6 +499,21 @@ export default function RoomPage() {
                 Start Game
               </button>
             )}
+            <button
+              onClick={async () => {
+                setError("Refreshing...");
+                await loadRoomData();
+                await loadCurrentRound();
+                await loadPlayerHand();
+                await loadPlayers();
+                await loadSubmissions();
+                setError("Refreshed!");
+                setTimeout(() => setError(""), 2000);
+              }}
+              className="px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors"
+            >
+              Refresh
+            </button>
             <button
               onClick={leaveRoom}
               className="px-4 py-2 bg-red-600 rounded-lg hover:bg-red-500 transition-colors"
