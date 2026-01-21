@@ -20,7 +20,7 @@ export default function GamePage() {
   // UI state
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [gamePhase, setGamePhase] = useState("waiting"); // waiting, submitting, judging, results
+  // Remove unused gamePhase state
 
   useEffect(() => {
     if (!roomId || !user) return;
@@ -35,11 +35,18 @@ export default function GamePage() {
   async function loadGameData() {
     try {
       // Load room
-      const { data: roomData } = await supabase
+      const { data: roomData, error: roomError } = await supabase
         .from("rooms")
         .select("*, decks(name, type)")
         .eq("id", roomId)
         .single();
+      
+      if (roomError) {
+        console.error("Room load error:", roomError);
+        setError("Room not found or access denied");
+        setLoading(false);
+        return;
+      }
       
       if (roomData) setRoom(roomData);
 
@@ -59,7 +66,7 @@ export default function GamePage() {
           .from("rounds")
           .select("*, black_cards(text), profiles!judge_profile_id(username)")
           .eq("room_id", roomId)
-          .eq("status", "submitting")
+          .in("status", ["submitting", "judging"])
           .order("created_at", { ascending: false })
           .limit(1);
         
@@ -136,6 +143,12 @@ export default function GamePage() {
   }
 
   async function dealCards() {
+    // Clear existing hands first
+    await supabase
+      .from("player_hands")
+      .delete()
+      .eq("room_id", roomId);
+
     // Get white cards
     const { data: whiteCards } = await supabase
       .from("white_cards")
@@ -146,19 +159,25 @@ export default function GamePage() {
       throw new Error("No white cards found");
     }
 
+    if (whiteCards.length < players.length * 10) {
+      throw new Error("Not enough cards for all players");
+    }
+
     // Shuffle cards
     const shuffled = [...whiteCards].sort(() => Math.random() - 0.5);
 
     // Deal 10 cards to each player
     const hands = [];
+    let cardIndex = 0;
+    
     for (let i = 0; i < players.length; i++) {
-      const playerCards = shuffled.slice(i * 10, (i + 1) * 10);
-      for (const card of playerCards) {
+      for (let j = 0; j < 10; j++) {
         hands.push({
           room_id: roomId,
           profile_id: players[i].profile_id,
-          white_card_id: card.id
+          white_card_id: shuffled[cardIndex].id
         });
+        cardIndex++;
       }
     }
 
@@ -180,6 +199,10 @@ export default function GamePage() {
 
     const randomCard = blackCards[Math.floor(Math.random() * blackCards.length)];
     const judge = players.find(p => p.is_judge);
+
+    if (!judge) {
+      throw new Error("No judge found");
+    }
 
     // Create round
     const { error } = await supabase
@@ -280,36 +303,59 @@ export default function GamePage() {
     try {
       // Rotate judge
       const currentJudgeIndex = players.findIndex(p => p.is_judge);
-      const nextJudgeIndex = (currentJudgeIndex + 1) % players.length;
+      const nextJudgeIndex = currentJudgeIndex >= 0 ? (currentJudgeIndex + 1) % players.length : 0;
 
+      // Clear all judges first
       await supabase
         .from("room_players")
         .update({ is_judge: false })
         .eq("room_id", roomId);
 
-      await supabase
-        .from("room_players")
-        .update({ is_judge: true })
-        .eq("room_id", roomId)
-        .eq("profile_id", players[nextJudgeIndex].profile_id);
+      // Set new judge
+      if (players[nextJudgeIndex]) {
+        await supabase
+          .from("room_players")
+          .update({ is_judge: true })
+          .eq("room_id", roomId)
+          .eq("profile_id", players[nextJudgeIndex].profile_id);
+      }
 
-      // Replenish cards (simplified - just add one card per player)
+      // Replenish cards to 10 per player
       for (const player of players) {
-        const { data: availableCards } = await supabase
-          .from("white_cards")
+        // Count current cards
+        const { data: currentCards } = await supabase
+          .from("player_hands")
           .select("id")
-          .eq("deck_id", room.deck_id)
-          .limit(5);
+          .eq("room_id", roomId)
+          .eq("profile_id", player.profile_id);
 
-        if (availableCards && availableCards.length > 0) {
-          const randomCard = availableCards[Math.floor(Math.random() * availableCards.length)];
-          await supabase
+        const cardsNeeded = 10 - (currentCards?.length || 0);
+        
+        if (cardsNeeded > 0) {
+          // Get cards not in any player's hand
+          const { data: usedCards } = await supabase
             .from("player_hands")
-            .insert({
+            .select("white_card_id")
+            .eq("room_id", roomId);
+
+          const usedCardIds = usedCards?.map(c => c.white_card_id) || [];
+
+          const { data: availableCards } = await supabase
+            .from("white_cards")
+            .select("id")
+            .eq("deck_id", room.deck_id)
+            .not("id", "in", `(${usedCardIds.join(",") || "0"})`)
+            .limit(cardsNeeded);
+
+          if (availableCards && availableCards.length > 0) {
+            const newCards = availableCards.slice(0, cardsNeeded).map(card => ({
               room_id: roomId,
               profile_id: player.profile_id,
-              white_card_id: randomCard.id
-            });
+              white_card_id: card.id
+            }));
+
+            await supabase.from("player_hands").insert(newCards);
+          }
         }
       }
 
