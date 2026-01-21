@@ -61,25 +61,17 @@ export default function GamePage() {
 
       // If game is playing, load game data
       if (roomData?.status === "playing") {
-        // Load current round (get the latest round regardless of status)
-        const { data: roundData, error: roundError } = await supabase
+        // Load current round
+        const { data: roundData } = await supabase
           .from("rounds")
           .select("*, black_cards(text), profiles!judge_profile_id(username)")
           .eq("room_id", roomId)
           .order("created_at", { ascending: false })
           .limit(1);
         
-        console.log("Round loading:", { roundData, roundError, roomStatus: roomData?.status });
-        
-        if (roundError) {
-          console.error("Round load error:", roundError);
-        }
-        
         if (roundData && roundData.length > 0) {
-          console.log("Setting current round:", roundData[0]);
           setCurrentRound(roundData[0]);
         } else {
-          console.log("No rounds found for room", roomId);
           setCurrentRound(null);
         }
 
@@ -121,29 +113,33 @@ export default function GamePage() {
     }
   }
 
-  // Simple, direct start game function
-  async function simpleStartGame() {
+  async function startGame() {
     try {
       setError("Starting game...");
-      console.log("=== SIMPLE START GAME ===");
+
+      if (players.length < 3) {
+        throw new Error("Need at least 3 players to start");
+      }
 
       // 1. Set room to playing
       await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
-      console.log("✓ Room set to playing");
 
       // 2. Set first player as judge
       await supabase.from("room_players").update({ is_judge: false }).eq("room_id", roomId);
       await supabase.from("room_players").update({ is_judge: true }).eq("room_id", roomId).eq("profile_id", players[0].profile_id);
-      console.log("✓ Judge set:", players[0].profiles?.username);
 
       // 3. Deal 10 cards to each player
       await supabase.from("player_hands").delete().eq("room_id", roomId);
       
       const { data: whiteCards } = await supabase.from("white_cards").select("id").eq("deck_id", room.deck_id);
-      const shuffled = [...whiteCards].sort(() => Math.random() - 0.5);
+      if (!whiteCards || whiteCards.length < players.length * 10) {
+        throw new Error("Not enough cards in deck");
+      }
       
+      const shuffled = [...whiteCards].sort(() => Math.random() - 0.5);
       const hands = [];
       let cardIndex = 0;
+      
       for (let i = 0; i < players.length; i++) {
         for (let j = 0; j < 10; j++) {
           hands.push({
@@ -155,209 +151,33 @@ export default function GamePage() {
         }
       }
       await supabase.from("player_hands").insert(hands);
-      console.log("✓ Cards dealt to all players");
 
       // 4. Create round with black card
       const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
-      const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
+      if (!blackCards || blackCards.length === 0) {
+        throw new Error("No black cards found");
+      }
       
+      const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
       await supabase.from("rounds").insert({
         room_id: parseInt(roomId),
         black_card_id: randomBlackCard.id,
         judge_profile_id: players[0].profile_id,
         status: "submitting"
       });
-      console.log("✓ Round created with black card");
 
-      // 5. Refresh everything
+      // 5. Refresh game data
       await loadGameData();
-      console.log("✓ Game data refreshed");
-
+      
       setError("Game started!");
       setTimeout(() => setError(""), 2000);
       
     } catch (err) {
-      console.error("Simple start game error:", err);
+      console.error("Start game error:", err);
       setError("Failed to start: " + err.message);
     }
   }
 
-  // Keep the old complex function for reference
-  async function startGame() {
-    try {
-      setError("Starting game...");
-      
-      // First, reload player data to ensure we have current players
-      const { data: currentPlayers, error: playersError } = await supabase
-        .from("room_players")
-        .select("*, profiles(username)")
-        .eq("room_id", roomId)
-        .order("joined_at");
-      
-      if (playersError) {
-        throw new Error("Failed to load players: " + playersError.message);
-      }
-      
-      if (!currentPlayers || currentPlayers.length === 0) {
-        throw new Error("No players found in room");
-      }
-      
-      if (currentPlayers.length < 3) {
-        throw new Error("Need at least 3 players to start");
-      }
-      
-      // Update players state
-      setPlayers(currentPlayers);
-      
-      // Update room status
-      await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
-      
-      // Clear all judges first, then set the first player as judge
-      await supabase
-        .from("room_players")
-        .update({ is_judge: false })
-        .eq("room_id", roomId);
-        
-      await supabase
-        .from("room_players")
-        .update({ is_judge: true })
-        .eq("room_id", roomId)
-        .eq("profile_id", currentPlayers[0].profile_id);
-      
-      // Update the judge in our local array
-      const updatedPlayers = currentPlayers.map((player, index) => ({
-        ...player,
-        is_judge: index === 0
-      }));
-      setPlayers(updatedPlayers);
-      
-      // Deal cards to all players
-      await dealCards(updatedPlayers);
-      
-      // Create first round
-      console.log("Creating round with players:", updatedPlayers.map(p => ({ id: p.profile_id, is_judge: p.is_judge })));
-      const createdRound = await createRound(updatedPlayers);
-      console.log("Round created successfully:", createdRound);
-      
-      // Refresh game data to show the new round
-      console.log("Refreshing game data...");
-      await loadGameData();
-      console.log("Game data refreshed");
-      
-      setError("Game started!");
-      setTimeout(() => setError(""), 2000);
-    } catch (err) {
-      console.error("Start game error:", err);
-      setError("Failed to start game: " + err.message);
-    }
-  }
-
-  async function dealCards(playersToUse = players) {
-    // Clear existing hands first
-    await supabase
-      .from("player_hands")
-      .delete()
-      .eq("room_id", roomId);
-
-    // Get white cards
-    const { data: whiteCards } = await supabase
-      .from("white_cards")
-      .select("id")
-      .eq("deck_id", room.deck_id);
-
-    if (!whiteCards || whiteCards.length === 0) {
-      throw new Error("No white cards found");
-    }
-
-    if (whiteCards.length < playersToUse.length * 10) {
-      throw new Error("Not enough cards for all players");
-    }
-
-    // Shuffle cards
-    const shuffled = [...whiteCards].sort(() => Math.random() - 0.5);
-
-    // Deal 10 cards to EVERY player (including judge)
-    const hands = [];
-    let cardIndex = 0;
-    
-    for (let i = 0; i < playersToUse.length; i++) {
-      for (let j = 0; j < 10; j++) {
-        hands.push({
-          room_id: roomId,
-          profile_id: playersToUse[i].profile_id,
-          white_card_id: shuffled[cardIndex].id
-        });
-        cardIndex++;
-      }
-    }
-
-    // Insert all hands
-    const { error } = await supabase.from("player_hands").insert(hands);
-    if (error) throw error;
-  }
-
-  async function createRound(playersToUse = players) {
-    console.log("=== CREATE ROUND START ===");
-    console.log("Room ID:", roomId);
-    console.log("Room deck_id:", room?.deck_id);
-    console.log("Players to use:", playersToUse?.map(p => ({ id: p.profile_id, is_judge: p.is_judge })));
-
-    if (!room?.deck_id) {
-      throw new Error("No deck_id found in room");
-    }
-
-    // Get random black card
-    console.log("Fetching black cards for deck:", room.deck_id);
-    const { data: blackCards, error: blackCardError } = await supabase
-      .from("black_cards")
-      .select("id")
-      .eq("deck_id", room.deck_id);
-
-    console.log("Black cards result:", { blackCards, blackCardError });
-
-    if (blackCardError) {
-      throw new Error("Failed to fetch black cards: " + blackCardError.message);
-    }
-
-    if (!blackCards || blackCards.length === 0) {
-      throw new Error("No black cards found for deck " + room.deck_id);
-    }
-
-    const randomCard = blackCards[Math.floor(Math.random() * blackCards.length)];
-    console.log("Selected black card:", randomCard);
-
-    const judge = playersToUse.find(p => p.is_judge);
-    console.log("Found judge:", judge);
-
-    if (!judge) {
-      console.error("No judge found in players:", playersToUse.map(p => ({ id: p.profile_id, is_judge: p.is_judge })));
-      throw new Error("No judge found");
-    }
-
-    // Create round
-    const roundData = {
-      room_id: parseInt(roomId),
-      black_card_id: randomCard.id,
-      judge_profile_id: judge.profile_id,
-      status: "submitting"
-    };
-    
-    console.log("Creating round with data:", roundData);
-    
-    const { data: insertedRound, error: insertError } = await supabase
-      .from("rounds")
-      .insert(roundData)
-      .select();
-
-    console.log("Round creation result:", { insertedRound, insertError });
-
-    if (insertError) {
-      throw new Error("Failed to create round: " + insertError.message);
-    }
-
-    console.log("=== CREATE ROUND SUCCESS ===");
-    return insertedRound;
-  }
 
   async function submitCard(cardId) {
     try {
@@ -406,28 +226,14 @@ export default function GamePage() {
       if (!submission) throw new Error("Submission not found");
 
       // Update round as completed
-      await supabase
-        .from("rounds")
-        .update({
-          winner_profile_id: submission.profile_id,
-          status: "completed",
-          end_time: new Date().toISOString()
-        })
-        .eq("id", currentRound.id);
+      await supabase.from("rounds").update({
+        winner_profile_id: submission.profile_id,
+        status: "completed"
+      }).eq("id", currentRound.id);
 
       // Update winner's score
-      const { data: currentPlayer } = await supabase
-        .from("room_players")
-        .select("score")
-        .eq("room_id", roomId)
-        .eq("profile_id", submission.profile_id)
-        .single();
-
-      await supabase
-        .from("room_players")
-        .update({ score: (currentPlayer?.score || 0) + 1 })
-        .eq("room_id", roomId)
-        .eq("profile_id", submission.profile_id);
+      const { data: currentPlayer } = await supabase.from("room_players").select("score").eq("room_id", roomId).eq("profile_id", submission.profile_id).single();
+      await supabase.from("room_players").update({ score: (currentPlayer?.score || 0) + 1 }).eq("room_id", roomId).eq("profile_id", submission.profile_id);
 
       // Start next round after delay
       setTimeout(async () => {
@@ -445,64 +251,41 @@ export default function GamePage() {
     try {
       // Rotate judge
       const currentJudgeIndex = players.findIndex(p => p.is_judge);
-      const nextJudgeIndex = currentJudgeIndex >= 0 ? (currentJudgeIndex + 1) % players.length : 0;
+      const nextJudgeIndex = (currentJudgeIndex + 1) % players.length;
 
-      // Clear all judges first
-      await supabase
-        .from("room_players")
-        .update({ is_judge: false })
-        .eq("room_id", roomId);
-
-      // Set new judge
-      if (players[nextJudgeIndex]) {
-        await supabase
-          .from("room_players")
-          .update({ is_judge: true })
-          .eq("room_id", roomId)
-          .eq("profile_id", players[nextJudgeIndex].profile_id);
-      }
+      await supabase.from("room_players").update({ is_judge: false }).eq("room_id", roomId);
+      await supabase.from("room_players").update({ is_judge: true }).eq("room_id", roomId).eq("profile_id", players[nextJudgeIndex].profile_id);
 
       // Replenish cards to 10 per player
       for (const player of players) {
-        // Count current cards
-        const { data: currentCards } = await supabase
-          .from("player_hands")
-          .select("id")
-          .eq("room_id", roomId)
-          .eq("profile_id", player.profile_id);
-
+        const { data: currentCards } = await supabase.from("player_hands").select("id").eq("room_id", roomId).eq("profile_id", player.profile_id);
         const cardsNeeded = 10 - (currentCards?.length || 0);
         
         if (cardsNeeded > 0) {
-          // Get cards not in any player's hand
-          const { data: usedCards } = await supabase
-            .from("player_hands")
-            .select("white_card_id")
-            .eq("room_id", roomId);
-
-          const usedCardIds = usedCards?.map(c => c.white_card_id) || [];
-
-          const { data: availableCards } = await supabase
-            .from("white_cards")
-            .select("id")
-            .eq("deck_id", room.deck_id)
-            .not("id", "in", `(${usedCardIds.join(",") || "0"})`)
-            .limit(cardsNeeded);
-
+          const { data: availableCards } = await supabase.from("white_cards").select("id").eq("deck_id", room.deck_id).limit(cardsNeeded);
           if (availableCards && availableCards.length > 0) {
-            const newCards = availableCards.slice(0, cardsNeeded).map(card => ({
+            const newCards = availableCards.map(card => ({
               room_id: roomId,
               profile_id: player.profile_id,
               white_card_id: card.id
             }));
-
             await supabase.from("player_hands").insert(newCards);
           }
         }
       }
 
       // Create new round
-      await createRound();
+      const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
+      const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
+      
+      await supabase.from("rounds").insert({
+        room_id: parseInt(roomId),
+        black_card_id: randomBlackCard.id,
+        judge_profile_id: players[nextJudgeIndex].profile_id,
+        status: "submitting"
+      });
+
+      await loadGameData();
     } catch (err) {
       console.error("Next round error:", err);
     }
@@ -611,7 +394,7 @@ export default function GamePage() {
                 <p className="text-zinc-400 mb-6">Need at least 3 players to start</p>
                 {isHost && (
                   <button
-                    onClick={simpleStartGame}
+                    onClick={startGame}
                     disabled={players.length < 3}
                     className={`px-6 py-3 rounded-lg font-bold ${
                       players.length >= 3
