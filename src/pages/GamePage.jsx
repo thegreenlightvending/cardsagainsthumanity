@@ -61,12 +61,11 @@ export default function GamePage() {
 
       // If game is playing, load game data
       if (roomData?.status === "playing") {
-        // Load current round
+        // Load current round (get the latest round regardless of status)
         const { data: roundData } = await supabase
           .from("rounds")
           .select("*, black_cards(text), profiles!judge_profile_id(username)")
           .eq("room_id", roomId)
-          .in("status", ["submitting", "judging"])
           .order("created_at", { ascending: false })
           .limit(1);
         
@@ -148,11 +147,18 @@ export default function GamePage() {
         .eq("room_id", roomId)
         .eq("profile_id", currentPlayers[0].profile_id);
       
+      // Update the judge in our local array
+      const updatedPlayers = currentPlayers.map((player, index) => ({
+        ...player,
+        is_judge: index === 0
+      }));
+      setPlayers(updatedPlayers);
+      
       // Deal cards to all players
-      await dealCards(currentPlayers);
+      await dealCards(updatedPlayers);
       
       // Create first round
-      await createRound(currentPlayers);
+      await createRound(updatedPlayers);
       
       // Refresh game data to show the new round
       await loadGameData();
