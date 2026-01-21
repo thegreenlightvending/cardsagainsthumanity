@@ -3,7 +3,7 @@ import LoginPage from "./pages/LoginPage";
 import HomePage from "./pages/HomePage";
 import CreateRoomPage from "./pages/CreateRoomPage";
 import JoinRoomPage from "./pages/JoinRoomPage";
-import RoomPage from "./pages/RoomPage";
+import GamePage from "./pages/GamePage";
 import { RequireAuth } from "./auth/RequireAuth";
 
 export default function AppRouter() {
@@ -39,7 +39,7 @@ export default function AppRouter() {
           path="/room/:roomId"
           element={
             <RequireAuth>
-              <RoomPage />
+              <GamePage />
             </RequireAuth>
           }
         />
