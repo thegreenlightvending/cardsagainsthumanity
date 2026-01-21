@@ -140,7 +140,12 @@ export default function GamePage() {
       // Update room status
       await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
       
-      // Set first player as judge
+      // Clear all judges first, then set the first player as judge
+      await supabase
+        .from("room_players")
+        .update({ is_judge: false })
+        .eq("room_id", roomId);
+        
       await supabase
         .from("room_players")
         .update({ is_judge: true })
@@ -230,6 +235,7 @@ export default function GamePage() {
     const judge = playersToUse.find(p => p.is_judge);
 
     if (!judge) {
+      console.error("No judge found in players:", playersToUse.map(p => ({ id: p.profile_id, is_judge: p.is_judge })));
       throw new Error("No judge found");
     }
 
