@@ -70,22 +70,27 @@ export default function GamePage() {
       if (playersData) setPlayers(playersData);
 
       // If game is playing, load game data
+      console.log("🔍 Room status:", roomData?.status);
       if (roomData?.status === "playing") {
-      // Load ACTIVE round (black card dealt, judge hasn't picked winner yet)
-      const { data: roundData } = await supabase
-        .from("rounds")
-        .select("*, black_cards(text), profiles!judge_profile_id(username)")
-        .eq("room_id", roomId)
-        .eq("status", "active")  // Only get active rounds
-        .order("created_at", { ascending: false })
-        .limit(1);
-      
-      if (roundData && roundData.length > 0) {
-        setCurrentRound(roundData[0]);
-      } else {
-        setCurrentRound(null);
-      }
-
+        console.log("🔍 Loading active rounds...");
+        // Load ACTIVE round (black card dealt, judge hasn't picked winner yet)
+        const { data: roundData, error: roundError } = await supabase
+          .from("rounds")
+          .select("*, black_cards(text), profiles!judge_profile_id(username)")
+          .eq("room_id", roomId)
+          .eq("status", "active")  // Only get active rounds
+          .order("created_at", { ascending: false })
+          .limit(1);
+        
+        console.log("🔍 Round query result:", { roundData, roundError });
+        
+        if (roundData && roundData.length > 0) {
+          console.log("🔍 Setting current round:", roundData[0]);
+          setCurrentRound(roundData[0]);
+        } else {
+          console.log("🔍 No active rounds found");
+          setCurrentRound(null);
+        }
         // Load player hand
         const { data: handData } = await supabase
           .from("player_hands")
@@ -104,6 +109,11 @@ export default function GamePage() {
           
           if (submissionsData) setSubmissions(submissionsData);
         }
+      } else {
+        console.log("🔍 Game not playing, clearing current round");
+        setCurrentRound(null);
+        setPlayerHand([]);
+        setSubmissions([]);
       }
 
       // Load messages
@@ -476,8 +486,11 @@ export default function GamePage() {
                     )}
                   </div>
                   
-                  {/* ACTIVE ROUND STATUS */}
+                  {/* DEBUG & ACTIVE ROUND STATUS */}
                   <div className="bg-zinc-800 rounded-lg p-4">
+                    <div className="text-xs text-zinc-500 mb-3 font-mono">
+                      DEBUG: Room={room?.status} | Round={currentRound ? "YES" : "NO"} | Players={players.length}
+                    </div>
                     {currentRound ? (
                       <div className="text-center">
                         <p className="text-green-400 font-bold mb-2">🎯 ACTIVE ROUND</p>
@@ -491,7 +504,9 @@ export default function GamePage() {
                     ) : (
                       <div className="text-center">
                         <p className="text-red-400 font-bold">❌ NO ACTIVE ROUND</p>
-                        <p className="text-zinc-400 text-sm">Black card not dealt yet</p>
+                        <p className="text-zinc-400 text-sm">
+                          {room?.status === "playing" ? "Round should exist but doesn't" : "Game not started yet"}
+                        </p>
                       </div>
                     )}
                   </div>
