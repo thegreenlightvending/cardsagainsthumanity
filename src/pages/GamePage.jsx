@@ -161,6 +161,14 @@ export default function GamePage() {
     setHasActiveRound(true);
     
     // Create active round
+    console.log("Creating round with:", {
+      room_id: roomId,
+      black_card_id: randomBlackCard.id,
+      judge_profile_id: judgeProfileId,
+      black_card_id_type: typeof randomBlackCard.id,
+      judge_profile_id_type: typeof judgeProfileId
+    });
+    
     const { data: newRound, error } = await supabase.from("rounds").insert({
       room_id: roomId,
       black_card_id: randomBlackCard.id,
@@ -168,7 +176,10 @@ export default function GamePage() {
       status: "submitting"
     }).select();
     
-    if (error) throw error;
+    if (error) {
+      console.error("Round creation error:", error);
+      throw error;
+    }
     return newRound[0];
   }
 
