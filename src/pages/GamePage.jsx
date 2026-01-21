@@ -70,25 +70,27 @@ export default function GamePage() {
       if (playersData) setPlayers(playersData);
 
       // If game is playing, load game data
-      console.log("🔍 Room status:", roomData?.status);
       if (roomData?.status === "playing") {
-        console.log("🔍 Loading active rounds...");
-        // Load ACTIVE round (black card dealt, judge hasn't picked winner yet)
+        // Load ACTIVE round with black card text
         const { data: roundData, error: roundError } = await supabase
           .from("rounds")
-          .select("*, black_cards(text), profiles!judge_profile_id(username)")
+          .select(`
+            *,
+            black_cards(text),
+            profiles!judge_profile_id(username)
+          `)
           .eq("room_id", roomId)
-          .eq("status", "active")  // Only get active rounds
+          .eq("status", "active")
           .order("created_at", { ascending: false })
           .limit(1);
         
-        console.log("🔍 Round query result:", { roundData, roundError });
+        if (roundError) {
+          console.error("Round load error:", roundError);
+        }
         
         if (roundData && roundData.length > 0) {
-          console.log("🔍 Setting current round:", roundData[0]);
           setCurrentRound(roundData[0]);
         } else {
-          console.log("🔍 No active rounds found");
           setCurrentRound(null);
         }
         // Load player hand
@@ -110,7 +112,6 @@ export default function GamePage() {
           if (submissionsData) setSubmissions(submissionsData);
         }
       } else {
-        console.log("🔍 Game not playing, clearing current round");
         setCurrentRound(null);
         setPlayerHand([]);
         setSubmissions([]);
@@ -136,8 +137,6 @@ export default function GamePage() {
 
   // SINGLE FUNCTION TO CREATE ACTIVE ROUNDS
   async function createActiveRound(judgeProfileId) {
-    console.log("🎯 Creating new active round...");
-    
     // Get random black card
     const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
     if (!blackCards || blackCards.length === 0) {
@@ -145,7 +144,6 @@ export default function GamePage() {
     }
     
     const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
-    console.log("Selected black card:", randomBlackCard.id);
     
     // Create active round
     const { data: newRound, error } = await supabase.from("rounds").insert({
@@ -156,7 +154,6 @@ export default function GamePage() {
     }).select();
     
     if (error) throw error;
-    console.log("✓ Active round created:", newRound[0]?.id);
     return newRound[0];
   }
 
@@ -200,21 +197,30 @@ export default function GamePage() {
       await supabase.from("player_hands").insert(hands);
 
       // 4. CREATE ACTIVE ROUND
-      await createActiveRound(players[0].profile_id);
+      const newRound = await createActiveRound(players[0].profile_id);
 
-      // 5. Force immediate update
+      // 5. Update room status in state
       setRoom(prev => ({ ...prev, status: "playing" }));
       
-      // Create a fake round for immediate display while real one loads
-      const { data: blackCards } = await supabase.from("black_cards").select("*").eq("deck_id", room.deck_id).limit(1);
-      if (blackCards && blackCards.length > 0) {
-        setCurrentRound({
-          id: "temp",
-          black_cards: { text: blackCards[0].text },
-          profiles: { username: players[0].profiles?.username }
-        });
+      // 6. Load the round we just created
+      if (newRound) {
+        // Get the full round with black card text
+        const { data: fullRound } = await supabase
+          .from("rounds")
+          .select(`
+            *,
+            black_cards(text),
+            profiles!judge_profile_id(username)
+          `)
+          .eq("id", newRound.id)
+          .single();
+        
+        if (fullRound) {
+          setCurrentRound(fullRound);
+        }
       }
 
+      // 7. Refresh all game data
       await loadGameData();
       setError("");
       
