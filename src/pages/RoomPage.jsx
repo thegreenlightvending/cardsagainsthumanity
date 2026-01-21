@@ -195,6 +195,7 @@ export default function RoomPage() {
 
   async function loadPlayerHand() {
     try {
+      console.log("Loading player hand for:", user.id, "in room:", roomId);
       const { data, error } = await supabase
         .from("player_hands")
         .select(`
@@ -204,7 +205,12 @@ export default function RoomPage() {
         .eq("room_id", roomId)
         .eq("profile_id", user.id);
 
-      if (error) throw error;
+      if (error) {
+        console.error("Player hand query error:", error);
+        throw error;
+      }
+      
+      console.log("Player hand data:", data);
       setPlayerHand(data || []);
     } catch (err) {
       console.error("Failed to load player hand:", err);
@@ -429,13 +435,36 @@ export default function RoomPage() {
                   </div>
                 )}
 
-                {/* Player Hand (if not judge) */}
-                {currentRound && !players.find(p => p.profile_id === user.id)?.is_judge && (
+                {/* Debug Info */}
+                {room.status === "playing" && (
+                  <div className="bg-red-900/20 border border-red-500 rounded p-3 mb-4 text-xs">
+                    <strong>Debug Info:</strong><br/>
+                    Room Status: {room.status}<br/>
+                    Current Round: {currentRound ? 'Yes' : 'No'}<br/>
+                    Player Hand: {playerHand.length} cards<br/>
+                    Submissions: {submissions.length}<br/>
+                    Is Judge: {players.find(p => p.profile_id === user.id)?.is_judge ? 'Yes' : 'No'}
+                  </div>
+                )}
+
+                {/* Player Hand (show if game is playing and not judge) */}
+                {room.status === "playing" && !players.find(p => p.profile_id === user.id)?.is_judge && (
                   <div>
                     <h3 className="font-bold mb-3 text-center">Your Hand ({playerHand.length} cards)</h3>
                     {playerHand.length === 0 ? (
                       <div className="text-center text-zinc-400 py-8">
-                        <p>Loading your cards...</p>
+                        <p>No cards in hand</p>
+                        <p className="text-xs mt-2">If cards don't appear, check browser console for errors</p>
+                        <button 
+                          onClick={() => {
+                            console.log("Manual reload triggered");
+                            loadPlayerHand();
+                            loadCurrentRound();
+                          }}
+                          className="mt-3 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500"
+                        >
+                          Reload Cards
+                        </button>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
@@ -476,7 +505,7 @@ export default function RoomPage() {
                 )}
 
                 {/* Judge View */}
-                {currentRound && players.find(p => p.profile_id === user.id)?.is_judge && (
+                {room.status === "playing" && players.find(p => p.profile_id === user.id)?.is_judge && (
                   <div>
                     <div className="text-center mb-6">
                       <div className="inline-flex items-center gap-2 bg-purple-900/50 text-purple-400 px-4 py-2 rounded-lg">
