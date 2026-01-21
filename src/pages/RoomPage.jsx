@@ -531,8 +531,25 @@ export default function RoomPage() {
               </div>
             ) : (
               <div className="space-y-6">
-                {/* Current Round */}
-                {currentRound && (
+                {/* Show round info even if currentRound is incomplete */}
+                {room.status === "playing" && (
+                  <div className="bg-yellow-900/20 border border-yellow-500 rounded p-3 mb-4 text-xs">
+                    <strong>Round Debug:</strong><br/>
+                    Current Round Object: {currentRound ? 'Exists' : 'Null'}<br/>
+                    {currentRound && (
+                      <>
+                        Round ID: {currentRound.id}<br/>
+                        Black Card ID: {currentRound.black_card_id}<br/>
+                        Black Card Text: {currentRound.black_cards?.text || 'Missing'}<br/>
+                        Judge: {currentRound.profiles?.username || currentRound.judge_profile_id}<br/>
+                        Status: {currentRound.status}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Current Round - show if game is playing */}
+                {room.status === "playing" && currentRound && (
                   <div className="text-center mb-6">
                     <div className="bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-xl p-6 mb-4 border-2 border-zinc-700 shadow-xl">
                       <div className="flex items-center justify-center gap-2 mb-3">
@@ -542,7 +559,7 @@ export default function RoomPage() {
                       </div>
                       <div className="bg-black rounded-lg p-4 mb-3 min-h-[80px] flex items-center justify-center">
                         <p className="text-white text-xl font-medium leading-relaxed">
-                          {currentRound.black_cards?.text}
+                          {currentRound.black_cards?.text || "Loading black card..."}
                         </p>
                       </div>
                       <div className="flex items-center justify-center gap-2 text-sm text-zinc-400">
@@ -595,16 +612,28 @@ export default function RoomPage() {
                     Player Hand: {playerHand.length} cards<br/>
                     Submissions: {submissions.length}<br/>
                     Is Judge: {players.find(p => p.profile_id === user.id)?.is_judge ? 'Yes' : 'No'}<br/>
-                    <button 
-                      onClick={async () => {
-                        const { data } = await supabase.from("black_cards").select("*").eq("deck_id", room.deck_id);
-                        console.log("Black cards for deck:", data);
-                        alert(`Found ${data?.length || 0} black cards`);
-                      }}
-                      className="mt-2 px-2 py-1 bg-blue-600 text-white rounded text-xs"
-                    >
-                      Check Black Cards
-                    </button>
+                    <div className="mt-2 space-x-2">
+                      <button 
+                        onClick={async () => {
+                          const { data } = await supabase.from("black_cards").select("*").eq("deck_id", room.deck_id);
+                          console.log("Black cards for deck:", data);
+                          alert(`Found ${data?.length || 0} black cards`);
+                        }}
+                        className="px-2 py-1 bg-blue-600 text-white rounded text-xs"
+                      >
+                        Check Black Cards
+                      </button>
+                      <button 
+                        onClick={async () => {
+                          const { data } = await supabase.from("rounds").select("*, black_cards(*)").eq("room_id", roomId);
+                          console.log("All rounds for room:", data);
+                          alert(`Found ${data?.length || 0} rounds. Check console for details.`);
+                        }}
+                        className="px-2 py-1 bg-purple-600 text-white rounded text-xs"
+                      >
+                        Check Rounds
+                      </button>
+                    </div>
                   </div>
                 )}
 
