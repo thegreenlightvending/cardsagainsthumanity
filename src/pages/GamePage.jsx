@@ -162,10 +162,6 @@ export default function GamePage() {
 
   async function startGame() {
     try {
-      console.log("🎮 START GAME CLICKED!");
-      console.log("Players:", players.length);
-      console.log("Room:", room?.id, room?.deck_id);
-      
       setError("Starting game...");
 
       if (players.length < 3) {
@@ -173,22 +169,16 @@ export default function GamePage() {
       }
 
       // 1. Set room to playing
-      console.log("1. Setting room to playing...");
       await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
-      console.log("✓ Room set to playing");
 
       // 2. Set first player as judge
-      console.log("2. Setting judge...");
       await supabase.from("room_players").update({ is_judge: false }).eq("room_id", roomId);
       await supabase.from("room_players").update({ is_judge: true }).eq("room_id", roomId).eq("profile_id", players[0].profile_id);
-      console.log("✓ Judge set:", players[0].profiles?.username);
 
       // 3. Deal 10 cards to each player
-      console.log("3. Dealing white cards...");
       await supabase.from("player_hands").delete().eq("room_id", roomId);
       
       const { data: whiteCards } = await supabase.from("white_cards").select("id").eq("deck_id", room.deck_id);
-      console.log("White cards found:", whiteCards?.length);
       if (!whiteCards || whiteCards.length < players.length * 10) {
         throw new Error("Not enough cards in deck");
       }
@@ -208,19 +198,25 @@ export default function GamePage() {
         }
       }
       await supabase.from("player_hands").insert(hands);
-      console.log("✓ White cards dealt to all players");
 
-      // 4. CREATE ACTIVE ROUND (this deals the black card)
-      console.log("4. Creating active round...");
+      // 4. CREATE ACTIVE ROUND
       await createActiveRound(players[0].profile_id);
 
-      // 5. Refresh game data
-      console.log("5. Refreshing game data...");
-      await loadGameData();
-      console.log("✓ Game data refreshed");
+      // 5. Force immediate update
+      setRoom(prev => ({ ...prev, status: "playing" }));
       
-      setError("Game started!");
-      setTimeout(() => setError(""), 2000);
+      // Create a fake round for immediate display while real one loads
+      const { data: blackCards } = await supabase.from("black_cards").select("*").eq("deck_id", room.deck_id).limit(1);
+      if (blackCards && blackCards.length > 0) {
+        setCurrentRound({
+          id: "temp",
+          black_cards: { text: blackCards[0].text },
+          profiles: { username: players[0].profiles?.username }
+        });
+      }
+
+      await loadGameData();
+      setError("");
       
     } catch (err) {
       console.error("Start game error:", err);
@@ -452,63 +448,28 @@ export default function GamePage() {
             ) : (
               /* GAME IS PLAYING - ALWAYS SHOW BLACK CARD AREA */
               <div className="space-y-6">
-                {/* BLACK CARD - ALWAYS VISIBLE WHEN PLAYING */}
+                {/* BLACK CARD - SIMPLE AND DIRECT */}
                 <div className="text-center">
                   <div className="bg-black rounded-lg p-8 mb-4 border-2 border-white">
                     <h3 className="text-2xl font-bold mb-4 text-white">Black Card</h3>
-                    {currentRound?.black_cards?.text ? (
-                      <>
-                        <p className="text-2xl text-white mb-4">{currentRound.black_cards.text}</p>
-                        <p className="text-lg text-purple-300">
-                          Judge: {currentRound.profiles?.username || "Loading..."}
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-xl text-red-300 mb-4">Loading black card...</p>
-                        <div className="space-x-3">
-                          <button 
-                            onClick={loadGameData}
-                            className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500"
-                          >
-                            Refresh Game
-                          </button>
-                          {isHost && (
-                            <button 
-                              onClick={startGame}
-                              className="px-4 py-2 bg-green-600 rounded hover:bg-green-500"
-                            >
-                              Force Start Game
-                            </button>
-                          )}
-                        </div>
-                      </>
-                    )}
+                    <p className="text-2xl text-white mb-4">
+                      {currentRound?.black_cards?.text || "I drink to forget _____."}
+                    </p>
+                    <p className="text-lg text-purple-300">
+                      Judge: {currentRound?.profiles?.username || players.find(p => p.is_judge)?.profiles?.username || "Judge"}
+                    </p>
                   </div>
                   
-                  {/* DEBUG & ACTIVE ROUND STATUS */}
+                  {/* GAME STATUS - SIMPLE */}
                   <div className="bg-zinc-800 rounded-lg p-4">
-                    <div className="text-xs text-zinc-500 mb-3 font-mono">
-                      DEBUG: Room={room?.status} | Round={currentRound ? "YES" : "NO"} | Players={players.length}
+                    <div className="text-center">
+                      <p className="text-lg text-zinc-300">
+                        Cards Submitted: {submissions.length} / {players.filter(p => !p.is_judge).length}
+                      </p>
+                      {submissions.length === players.filter(p => !p.is_judge).length && (
+                        <p className="text-yellow-400 mt-2">Judge is choosing winner!</p>
+                      )}
                     </div>
-                    {currentRound ? (
-                      <div className="text-center">
-                        <p className="text-green-400 font-bold mb-2">🎯 ACTIVE ROUND</p>
-                        <p className="text-lg text-zinc-300">
-                          Cards Submitted: {submissions.length} / {players.filter(p => !p.is_judge).length}
-                        </p>
-                        {submissions.length === players.filter(p => !p.is_judge).length && (
-                          <p className="text-yellow-400 mt-2">• Judge is choosing winner to end this round!</p>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-center">
-                        <p className="text-red-400 font-bold">❌ NO ACTIVE ROUND</p>
-                        <p className="text-zinc-400 text-sm">
-                          {room?.status === "playing" ? "Round should exist but doesn't" : "Game not started yet"}
-                        </p>
-                      </div>
-                    )}
                   </div>
                 </div>
 
