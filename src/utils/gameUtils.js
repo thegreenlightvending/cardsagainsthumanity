@@ -123,27 +123,46 @@ async function dealCardsToPlayers(roomId, deckId, players) {
 }
 
 async function startNewRound(roomId, deckId, judgeId) {
+  console.log("Starting new round with deckId:", deckId, "judgeId:", judgeId);
+  
   // Get a random black card
   const { data: blackCards, error: blackCardsError } = await supabase
     .from("black_cards")
     .select("id")
     .eq("deck_id", deckId);
 
-  if (blackCardsError) throw blackCardsError;
+  if (blackCardsError) {
+    console.error("Black cards fetch error:", blackCardsError);
+    throw blackCardsError;
+  }
+
+  console.log("Found black cards:", blackCards?.length);
+
+  if (!blackCards || blackCards.length === 0) {
+    throw new Error("No black cards found for this deck");
+  }
 
   const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
+  console.log("Selected black card:", randomBlackCard.id);
 
   // Create the round
-  const { error: roundError } = await supabase
+  const { data: roundData, error: roundError } = await supabase
     .from("rounds")
     .insert({
       room_id: roomId,
       black_card_id: randomBlackCard.id,
       judge_profile_id: judgeId,
       status: "submitting"
-    });
+    })
+    .select()
+    .single();
 
-  if (roundError) throw roundError;
+  if (roundError) {
+    console.error("Round creation error:", roundError);
+    throw roundError;
+  }
+
+  console.log("Round created successfully:", roundData);
 }
 
 export async function submitCard(roundId, profileId, whiteCardId) {

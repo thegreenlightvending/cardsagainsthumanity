@@ -440,10 +440,21 @@ export default function RoomPage() {
                   <div className="bg-red-900/20 border border-red-500 rounded p-3 mb-4 text-xs">
                     <strong>Debug Info:</strong><br/>
                     Room Status: {room.status}<br/>
+                    Deck ID: {room.deck_id}<br/>
                     Current Round: {currentRound ? 'Yes' : 'No'}<br/>
                     Player Hand: {playerHand.length} cards<br/>
                     Submissions: {submissions.length}<br/>
-                    Is Judge: {players.find(p => p.profile_id === user.id)?.is_judge ? 'Yes' : 'No'}
+                    Is Judge: {players.find(p => p.profile_id === user.id)?.is_judge ? 'Yes' : 'No'}<br/>
+                    <button 
+                      onClick={async () => {
+                        const { data } = await supabase.from("black_cards").select("*").eq("deck_id", room.deck_id);
+                        console.log("Black cards for deck:", data);
+                        alert(`Found ${data?.length || 0} black cards`);
+                      }}
+                      className="mt-2 px-2 py-1 bg-blue-600 text-white rounded text-xs"
+                    >
+                      Check Black Cards
+                    </button>
                   </div>
                 )}
 
