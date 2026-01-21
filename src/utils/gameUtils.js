@@ -51,8 +51,15 @@ export async function startGame(roomId, deckId) {
     await dealCardsToPlayers(roomId, deckId, players);
 
     console.log("Step 5: Starting first round");
+    console.log("Judge will be:", players[0].profile_id);
     // 5. Start the first round
-    await startNewRound(roomId, deckId, players[0].profile_id);
+    try {
+      await startNewRound(roomId, deckId, players[0].profile_id);
+      console.log("Round created successfully in startGame");
+    } catch (roundError) {
+      console.error("Round creation failed in startGame:", roundError);
+      throw new Error("Failed to create first round: " + roundError.message);
+    }
 
     console.log("Game started successfully");
     return { success: true };

@@ -660,14 +660,39 @@ export default function RoomPage() {
                             onClick={async () => {
                               try {
                                 console.log("Manual round start triggered");
+                                console.log("Players:", players);
+                                console.log("Room deck ID:", room.deck_id);
+                                
                                 const judge = players.find(p => p.is_judge);
-                                if (judge) {
-                                  await startNewRound(roomId, room.deck_id, judge.profile_id);
-                                  loadCurrentRound();
-                                  setError("Round started manually!");
+                                console.log("Found judge:", judge);
+                                
+                                if (!judge) {
+                                  // If no judge, make first player judge
+                                  if (players.length > 0) {
+                                    await supabase
+                                      .from("room_players")
+                                      .update({ is_judge: true })
+                                      .eq("room_id", roomId)
+                                      .eq("profile_id", players[0].profile_id);
+                                    
+                                    await loadPlayers(); // Reload to get updated judge status
+                                    const updatedJudge = players[0];
+                                    console.log("Set judge to:", updatedJudge);
+                                    
+                                    await startNewRound(roomId, room.deck_id, updatedJudge.profile_id);
+                                  } else {
+                                    throw new Error("No players found");
+                                  }
                                 } else {
-                                  setError("No judge found!");
+                                  await startNewRound(roomId, room.deck_id, judge.profile_id);
                                 }
+                                
+                                setTimeout(() => {
+                                  loadCurrentRound();
+                                  loadPlayers();
+                                }, 1000);
+                                
+                                setError("Round started manually!");
                               } catch (err) {
                                 console.error("Manual round start error:", err);
                                 setError("Failed to start round: " + err.message);
