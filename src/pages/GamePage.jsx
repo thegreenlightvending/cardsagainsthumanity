@@ -126,6 +126,10 @@ export default function GamePage() {
 
   async function startGame() {
     try {
+      console.log("🎮 START GAME CLICKED!");
+      console.log("Players:", players.length);
+      console.log("Room:", room?.id, room?.deck_id);
+      
       setError("Starting game...");
 
       if (players.length < 3) {
@@ -133,16 +137,22 @@ export default function GamePage() {
       }
 
       // 1. Set room to playing
+      console.log("1. Setting room to playing...");
       await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
+      console.log("✓ Room set to playing");
 
       // 2. Set first player as judge
+      console.log("2. Setting judge...");
       await supabase.from("room_players").update({ is_judge: false }).eq("room_id", roomId);
       await supabase.from("room_players").update({ is_judge: true }).eq("room_id", roomId).eq("profile_id", players[0].profile_id);
+      console.log("✓ Judge set:", players[0].profiles?.username);
 
       // 3. Deal 10 cards to each player
+      console.log("3. Dealing cards...");
       await supabase.from("player_hands").delete().eq("room_id", roomId);
       
       const { data: whiteCards } = await supabase.from("white_cards").select("id").eq("deck_id", room.deck_id);
+      console.log("White cards found:", whiteCards?.length);
       if (!whiteCards || whiteCards.length < players.length * 10) {
         throw new Error("Not enough cards in deck");
       }
@@ -162,23 +172,34 @@ export default function GamePage() {
         }
       }
       await supabase.from("player_hands").insert(hands);
+      console.log("✓ Cards dealt to all players");
 
       // 4. START ACTIVE ROUND - Deal black card (this begins the round)
+      console.log("4. Creating active round with black card...");
       const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
+      console.log("Black cards found:", blackCards?.length);
       if (!blackCards || blackCards.length === 0) {
         throw new Error("No black cards found");
       }
       
       const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
-      await supabase.from("rounds").insert({
+      console.log("Selected black card:", randomBlackCard.id);
+      
+      const { data: insertedRound, error: roundError } = await supabase.from("rounds").insert({
         room_id: parseInt(roomId),
         black_card_id: randomBlackCard.id,
         judge_profile_id: players[0].profile_id,
         status: "active"  // Round is now ACTIVE - black card is dealt
-      });
+      }).select();
+      
+      console.log("Round creation result:", { insertedRound, roundError });
+      if (roundError) throw roundError;
+      console.log("✓ Active round created!");
 
       // 5. Refresh game data
+      console.log("5. Refreshing game data...");
       await loadGameData();
+      console.log("✓ Game data refreshed");
       
       setError("Game started!");
       setTimeout(() => setError(""), 2000);
@@ -435,12 +456,22 @@ export default function GamePage() {
                     ) : (
                       <>
                         <p className="text-xl text-red-300 mb-4">Loading black card...</p>
-                        <button 
-                          onClick={loadGameData}
-                          className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500"
-                        >
-                          Refresh Game
-                        </button>
+                        <div className="space-x-3">
+                          <button 
+                            onClick={loadGameData}
+                            className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500"
+                          >
+                            Refresh Game
+                          </button>
+                          {isHost && (
+                            <button 
+                              onClick={startGame}
+                              className="px-4 py-2 bg-green-600 rounded hover:bg-green-500"
+                            >
+                              Force Start Game
+                            </button>
+                          )}
+                        </div>
                       </>
                     )}
                   </div>
