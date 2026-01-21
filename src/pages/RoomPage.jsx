@@ -185,14 +185,17 @@ export default function RoomPage() {
       const result = await startGame(roomId, room.deck_id);
       console.log("Game start result:", result);
       
-      setError("Game started! First round beginning...");
+      setError("Game started! Loading round...");
       
-      // Reload all game data
-      setTimeout(() => {
-        loadRoomData();
-        loadCurrentRound();
-        loadPlayerHand();
-      }, 1000);
+      // Reload all game data with longer delay
+      setTimeout(async () => {
+        console.log("Reloading game data after start...");
+        await loadRoomData();
+        await loadCurrentRound();
+        await loadPlayerHand();
+        await loadPlayers();
+        console.log("Game data reloaded");
+      }, 2000);
     } catch (err) {
       console.error("Game start error:", err);
       setError("Failed to start game: " + err.message);
@@ -201,6 +204,7 @@ export default function RoomPage() {
 
   async function loadCurrentRound() {
     try {
+      console.log("Loading current round for room:", roomId);
       const { data, error } = await supabase
         .from("rounds")
         .select(`
@@ -211,11 +215,22 @@ export default function RoomPage() {
         .eq("room_id", roomId)
         .eq("status", "submitting")
         .order("created_at", { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
 
-      if (error && error.code !== 'PGRST116') throw error;
-      setCurrentRound(data);
+      if (error) {
+        console.error("Round query error:", error);
+        throw error;
+      }
+
+      console.log("Round query result:", data);
+      
+      if (data && data.length > 0) {
+        setCurrentRound(data[0]);
+        console.log("Set current round:", data[0]);
+      } else {
+        setCurrentRound(null);
+        console.log("No active round found");
+      }
     } catch (err) {
       console.error("Failed to load current round:", err);
     }
@@ -601,16 +616,39 @@ export default function RoomPage() {
                       <div className="text-center text-zinc-400 py-8">
                         <p>No cards in hand</p>
                         <p className="text-xs mt-2">If cards don't appear, check browser console for errors</p>
-                        <button 
-                          onClick={() => {
-                            console.log("Manual reload triggered");
-                            loadPlayerHand();
-                            loadCurrentRound();
-                          }}
-                          className="mt-3 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500"
-                        >
-                          Reload Cards
-                        </button>
+                        <div className="space-y-2">
+                          <button 
+                            onClick={() => {
+                              console.log("Manual reload triggered");
+                              loadPlayerHand();
+                              loadCurrentRound();
+                            }}
+                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 mr-2"
+                          >
+                            Reload Cards
+                          </button>
+                          <button 
+                            onClick={async () => {
+                              try {
+                                console.log("Manual round start triggered");
+                                const judge = players.find(p => p.is_judge);
+                                if (judge) {
+                                  await startNewRound(roomId, room.deck_id, judge.profile_id);
+                                  loadCurrentRound();
+                                  setError("Round started manually!");
+                                } else {
+                                  setError("No judge found!");
+                                }
+                              } catch (err) {
+                                console.error("Manual round start error:", err);
+                                setError("Failed to start round: " + err.message);
+                              }
+                            }}
+                            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-500"
+                          >
+                            Force Start Round
+                          </button>
+                        </div>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
