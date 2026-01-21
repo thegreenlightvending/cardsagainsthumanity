@@ -377,42 +377,100 @@ export default function RoomPage() {
               <div className="space-y-6">
                 {/* Current Round */}
                 {currentRound && (
-                  <div className="text-center">
-                    <div className="bg-zinc-800 rounded-lg p-4 mb-4">
-                      <h3 className="text-lg font-bold mb-2">Black Card</h3>
-                      <p className="text-xl">{currentRound.black_cards?.text}</p>
-                      <p className="text-sm text-zinc-400 mt-2">
+                  <div className="text-center mb-6">
+                    <div className="bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-xl p-6 mb-4 border-2 border-zinc-700 shadow-xl">
+                      <div className="flex items-center justify-center gap-2 mb-3">
+                        <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                        <h3 className="text-lg font-bold text-zinc-200">Black Card</h3>
+                        <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                      </div>
+                      <div className="bg-black rounded-lg p-4 mb-3 min-h-[80px] flex items-center justify-center">
+                        <p className="text-white text-xl font-medium leading-relaxed">
+                          {currentRound.black_cards?.text}
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-center gap-2 text-sm text-zinc-400">
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                        </svg>
                         Judge: {currentRound.profiles?.username}
-                      </p>
+                      </div>
                     </div>
 
                     {/* Submissions Status */}
-                    <p className="text-zinc-400 mb-4">
-                      {submissions.length} / {players.filter(p => !p.is_judge).length} cards submitted
-                    </p>
+                    <div className="flex items-center justify-center gap-4 text-sm mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
+                        <span className="text-emerald-400">{submissions.length} submitted</span>
+                      </div>
+                      <div className="w-1 h-4 bg-zinc-600"></div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 bg-zinc-500 rounded-full"></div>
+                        <span className="text-zinc-400">{players.filter(p => !p.is_judge).length - submissions.length} waiting</span>
+                      </div>
+                    </div>
+
+                    {/* Show submitted cards (face down) for everyone to see */}
+                    {submissions.length > 0 && (
+                      <div className="mb-6">
+                        <h4 className="text-sm font-medium text-zinc-400 mb-3">Submitted Cards</h4>
+                        <div className="flex justify-center gap-2 flex-wrap">
+                          {submissions.map((_, index) => (
+                            <div
+                              key={index}
+                              className="w-16 h-20 bg-gradient-to-br from-blue-600 to-blue-800 rounded-lg border-2 border-blue-400 shadow-lg flex items-center justify-center"
+                            >
+                              <div className="text-white text-xs font-bold">#{index + 1}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {/* Player Hand (if not judge) */}
                 {currentRound && !players.find(p => p.profile_id === user.id)?.is_judge && (
                   <div>
-                    <h3 className="font-bold mb-3">Your Cards</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {playerHand.map((handCard) => (
-                        <button
-                          key={handCard.id}
-                          onClick={() => handleSubmitCard(handCard.white_card_id)}
-                          disabled={submissions.some(s => s.profile_id === user.id)}
-                          className="bg-white text-black p-3 rounded-lg text-left hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {handCard.white_cards?.text}
-                        </button>
-                      ))}
-                    </div>
+                    <h3 className="font-bold mb-3 text-center">Your Hand ({playerHand.length} cards)</h3>
+                    {playerHand.length === 0 ? (
+                      <div className="text-center text-zinc-400 py-8">
+                        <p>Loading your cards...</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+                        {playerHand.map((handCard) => (
+                          <div
+                            key={handCard.id}
+                            className="relative group"
+                          >
+                            <button
+                              onClick={() => handleSubmitCard(handCard.white_card_id)}
+                              disabled={submissions.some(s => s.profile_id === user.id)}
+                              className="w-full bg-white text-black p-4 rounded-lg text-left hover:bg-gray-100 transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg border-2 border-gray-200 hover:border-blue-300 min-h-[120px] flex items-center justify-center"
+                            >
+                              <span className="text-sm font-medium leading-tight">
+                                {handCard.white_cards?.text}
+                              </span>
+                            </button>
+                            {!submissions.some(s => s.profile_id === user.id) && (
+                              <div className="absolute -top-2 -right-2 bg-blue-500 text-white text-xs px-2 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                                Click to play
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {submissions.some(s => s.profile_id === user.id) && (
-                      <p className="text-emerald-400 text-center mt-3">
-                        ✓ Card submitted! Waiting for other players...
-                      </p>
+                      <div className="text-center">
+                        <div className="inline-flex items-center gap-2 bg-emerald-900/50 text-emerald-400 px-4 py-2 rounded-lg">
+                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                          Card submitted! Waiting for other players...
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}
@@ -420,22 +478,46 @@ export default function RoomPage() {
                 {/* Judge View */}
                 {currentRound && players.find(p => p.profile_id === user.id)?.is_judge && (
                   <div>
-                    <h3 className="font-bold mb-3">You are the Judge</h3>
-                    <p className="text-zinc-400 mb-4">
-                      Wait for all players to submit their cards, then choose the winner.
-                    </p>
-                    {submissions.length === players.filter(p => !p.is_judge).length && (
-                      <div className="space-y-3">
-                        <h4 className="font-bold">Choose the winning card:</h4>
-                        {submissions.map((submission) => (
-                          <button
-                            key={submission.id}
-                            onClick={() => selectWinner(currentRound.id, submission.id, user.id)}
-                            className="block w-full bg-white text-black p-3 rounded-lg text-left hover:bg-gray-100 transition-colors"
-                          >
-                            {submission.white_cards?.text}
-                          </button>
-                        ))}
+                    <div className="text-center mb-6">
+                      <div className="inline-flex items-center gap-2 bg-purple-900/50 text-purple-400 px-4 py-2 rounded-lg">
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                        </svg>
+                        You are the Judge
+                      </div>
+                      <p className="text-zinc-400 mt-2">
+                        Waiting for {players.filter(p => !p.is_judge).length - submissions.length} more players to submit cards
+                      </p>
+                    </div>
+
+                    {submissions.length === players.filter(p => !p.is_judge).length ? (
+                      <div>
+                        <h4 className="font-bold text-center mb-4 text-lg">Choose the Winning Card:</h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {submissions.map((submission, index) => (
+                            <div key={submission.id} className="relative group">
+                              <button
+                                onClick={() => selectWinner(currentRound.id, submission.id, user.id)}
+                                className="w-full bg-white text-black p-4 rounded-lg text-left hover:bg-yellow-100 transition-all transform hover:scale-105 shadow-lg border-2 border-gray-200 hover:border-yellow-400 min-h-[120px] flex items-center justify-center"
+                              >
+                                <span className="text-sm font-medium leading-tight">
+                                  {submission.white_cards?.text}
+                                </span>
+                              </button>
+                              <div className="absolute -top-2 -left-2 bg-gray-700 text-white text-xs px-2 py-1 rounded-full">
+                                #{index + 1}
+                              </div>
+                              <div className="absolute -top-2 -right-2 bg-yellow-500 text-black text-xs px-2 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                                Pick Winner
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-8">
+                        <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-400 mb-4"></div>
+                        <p className="text-zinc-400">Waiting for players to submit their cards...</p>
                       </div>
                     )}
                   </div>
