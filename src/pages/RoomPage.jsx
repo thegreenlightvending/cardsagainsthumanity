@@ -151,11 +151,22 @@ export default function RoomPage() {
 
   async function handleStartGame() {
     try {
-      await startGame(roomId, room.deck_id);
+      setError("Starting game...");
+      console.log("Starting game with roomId:", roomId, "deckId:", room.deck_id);
+      
+      const result = await startGame(roomId, room.deck_id);
+      console.log("Game start result:", result);
+      
       setError("Game started! First round beginning...");
-      // Reload room data to reflect new status
-      loadRoomData();
+      
+      // Reload all game data
+      setTimeout(() => {
+        loadRoomData();
+        loadCurrentRound();
+        loadPlayerHand();
+      }, 1000);
     } catch (err) {
+      console.error("Game start error:", err);
       setError("Failed to start game: " + err.message);
     }
   }

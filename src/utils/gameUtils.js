@@ -2,14 +2,19 @@ import { supabase } from "../lib/supabase";
 
 export async function startGame(roomId, deckId) {
   try {
+    console.log("Step 1: Updating room status to playing");
     // 1. Update room status to "playing"
     const { error: roomError } = await supabase
       .from("rooms")
       .update({ status: "playing" })
       .eq("id", roomId);
 
-    if (roomError) throw roomError;
+    if (roomError) {
+      console.error("Room update error:", roomError);
+      throw roomError;
+    }
 
+    console.log("Step 2: Getting players");
     // 2. Get all players in the room
     const { data: players, error: playersError } = await supabase
       .from("room_players")
@@ -17,25 +22,39 @@ export async function startGame(roomId, deckId) {
       .eq("room_id", roomId)
       .order("joined_at");
 
-    if (playersError) throw playersError;
-
-    // 3. Select first judge (first player who joined)
-    if (players.length > 0) {
-      const { error: judgeError } = await supabase
-        .from("room_players")
-        .update({ is_judge: true })
-        .eq("room_id", roomId)
-        .eq("profile_id", players[0].profile_id);
-
-      if (judgeError) throw judgeError;
+    if (playersError) {
+      console.error("Players fetch error:", playersError);
+      throw playersError;
     }
 
+    console.log("Found players:", players);
+
+    if (!players || players.length === 0) {
+      throw new Error("No players found in room");
+    }
+
+    console.log("Step 3: Setting judge");
+    // 3. Select first judge (first player who joined)
+    const { error: judgeError } = await supabase
+      .from("room_players")
+      .update({ is_judge: true })
+      .eq("room_id", roomId)
+      .eq("profile_id", players[0].profile_id);
+
+    if (judgeError) {
+      console.error("Judge update error:", judgeError);
+      throw judgeError;
+    }
+
+    console.log("Step 4: Dealing cards");
     // 4. Deal cards to all players
     await dealCardsToPlayers(roomId, deckId, players);
 
+    console.log("Step 5: Starting first round");
     // 5. Start the first round
     await startNewRound(roomId, deckId, players[0].profile_id);
 
+    console.log("Game started successfully");
     return { success: true };
   } catch (error) {
     console.error("Error starting game:", error);
@@ -44,13 +63,23 @@ export async function startGame(roomId, deckId) {
 }
 
 async function dealCardsToPlayers(roomId, deckId, players) {
+  console.log("Getting white cards for deck:", deckId);
   // Get white cards from the deck
   const { data: whiteCards, error: cardsError } = await supabase
     .from("white_cards")
     .select("id")
     .eq("deck_id", deckId);
 
-  if (cardsError) throw cardsError;
+  if (cardsError) {
+    console.error("Cards fetch error:", cardsError);
+    throw cardsError;
+  }
+
+  console.log("Found white cards:", whiteCards?.length);
+
+  if (!whiteCards || whiteCards.length === 0) {
+    throw new Error("No white cards found for this deck");
+  }
 
   // Shuffle cards
   const shuffledCards = [...whiteCards].sort(() => Math.random() - 0.5);
@@ -59,11 +88,15 @@ async function dealCardsToPlayers(roomId, deckId, players) {
   const cardsPerPlayer = 7;
   const hands = [];
 
+  console.log("Dealing cards to", players.length, "players");
+
   for (let i = 0; i < players.length; i++) {
     const playerCards = shuffledCards.slice(
       i * cardsPerPlayer,
       (i + 1) * cardsPerPlayer
     );
+
+    console.log(`Player ${i} gets ${playerCards.length} cards`);
 
     for (const card of playerCards) {
       hands.push({
@@ -74,12 +107,19 @@ async function dealCardsToPlayers(roomId, deckId, players) {
     }
   }
 
+  console.log("Inserting", hands.length, "cards into player_hands");
+
   // Insert all hands at once
   const { error: handsError } = await supabase
     .from("player_hands")
     .insert(hands);
 
-  if (handsError) throw handsError;
+  if (handsError) {
+    console.error("Hands insert error:", handsError);
+    throw handsError;
+  }
+
+  console.log("Cards dealt successfully");
 }
 
 async function startNewRound(roomId, deckId, judgeId) {
