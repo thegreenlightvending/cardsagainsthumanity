@@ -93,13 +93,16 @@ export default function GamePage() {
           setCurrentRound(roundData[0]);
           setHasActiveRound(true);
         } else {
-          // Only clear currentRound, but don't reset hasActiveRound if it was just set
-          // hasActiveRound will be managed by createActiveRound and selectWinner
-          setCurrentRound(null);
-          // Only set to false if room is not playing (game hasn't started)
+          // If hasActiveRound is true but no round found, keep it true (round might be loading)
+          // Only clear if we're certain there's no round (room not playing)
           if (roomData?.status !== "playing") {
+            setCurrentRound(null);
             setHasActiveRound(false);
+          } else if (!hasActiveRound) {
+            // Only clear currentRound if hasActiveRound is also false
+            setCurrentRound(null);
           }
+          // If hasActiveRound is true and room is playing, keep currentRound as is
         }
         // Load player hand
         const { data: handData } = await supabase
@@ -217,10 +220,10 @@ export default function GamePage() {
       // 6. Update room status in state
       setRoom(prev => ({ ...prev, status: "playing" }));
       
-      // 7. Load the round we just created
-      if (newRound) {
+      // 7. Load the round we just created with full details
+      if (newRound && newRound.id) {
         // Get the full round with black card text
-        const { data: fullRound } = await supabase
+        const { data: fullRound, error: roundLoadError } = await supabase
           .from("rounds")
           .select(`
             *,
@@ -230,12 +233,31 @@ export default function GamePage() {
           .eq("id", newRound.id)
           .single();
         
+        if (roundLoadError) {
+          console.error("Error loading round:", roundLoadError);
+        }
+        
         if (fullRound) {
           setCurrentRound(fullRound);
+        } else {
+          // If query fails, try to construct round from what we have
+          const { data: blackCard } = await supabase
+            .from("black_cards")
+            .select("text")
+            .eq("id", newRound.black_card_id)
+            .single();
+          
+          if (blackCard) {
+            setCurrentRound({
+              ...newRound,
+              black_cards: { text: blackCard.text },
+              profiles: { username: players[0].profiles?.username }
+            });
+          }
         }
       }
 
-      // 7. Refresh all game data
+      // 8. Refresh all game data
       await loadGameData();
       setError("");
       
