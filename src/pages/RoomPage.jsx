@@ -548,8 +548,62 @@ export default function RoomPage() {
                   </div>
                 )}
 
-                {/* Current Round - show if game is playing */}
-                {room.status === "playing" && currentRound && (
+                {/* BLACK CARD DISPLAY - Always show when game is playing */}
+                {room.status === "playing" && (
+                  <div className="text-center mb-6">
+                    <div className="bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-xl p-6 mb-4 border-2 border-zinc-700 shadow-xl">
+                      <div className="flex items-center justify-center gap-2 mb-3">
+                        <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                        <h3 className="text-lg font-bold text-zinc-200">Black Card</h3>
+                        <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                      </div>
+                      <div className="bg-black rounded-lg p-4 mb-3 min-h-[80px] flex items-center justify-center">
+                        <p className="text-white text-xl font-medium leading-relaxed">
+                          {currentRound?.black_cards?.text || "No round active - click 'Force Start Round' to begin"}
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-center gap-2 text-sm text-zinc-400">
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                        </svg>
+                        Judge: {currentRound?.profiles?.username || players.find(p => p.is_judge)?.profiles?.username || "No judge assigned"}
+                      </div>
+                    </div>
+
+                    {/* Submissions Status */}
+                    <div className="flex items-center justify-center gap-4 text-sm mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
+                        <span className="text-emerald-400">{submissions.length} submitted</span>
+                      </div>
+                      <div className="w-1 h-4 bg-zinc-600"></div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 bg-zinc-500 rounded-full"></div>
+                        <span className="text-zinc-400">{players.filter(p => !p.is_judge).length - submissions.length} waiting</span>
+                      </div>
+                    </div>
+
+                    {/* Show submitted cards (face down) for everyone to see */}
+                    {submissions.length > 0 && (
+                      <div className="mb-6">
+                        <h4 className="text-sm font-medium text-zinc-400 mb-3">Submitted Cards</h4>
+                        <div className="flex justify-center gap-2 flex-wrap">
+                          {submissions.map((_, index) => (
+                            <div
+                              key={index}
+                              className="w-16 h-20 bg-gradient-to-br from-blue-600 to-blue-800 rounded-lg border-2 border-blue-400 shadow-lg flex items-center justify-center"
+                            >
+                              <div className="text-white text-xs font-bold">#{index + 1}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Remove the old conditional black card display since we have it above now */}
+                {false && room.status === "playing" && currentRound && (
                   <div className="text-center mb-6">
                     <div className="bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-xl p-6 mb-4 border-2 border-zinc-700 shadow-xl">
                       <div className="flex items-center justify-center gap-2 mb-3">
@@ -632,6 +686,24 @@ export default function RoomPage() {
                         className="px-2 py-1 bg-purple-600 text-white rounded text-xs"
                       >
                         Check Rounds
+                      </button>
+                      <button 
+                        onClick={async () => {
+                          // Just show a random black card for testing
+                          const { data } = await supabase.from("black_cards").select("*").eq("deck_id", room.deck_id).limit(1);
+                          if (data && data[0]) {
+                            setCurrentRound({
+                              id: 'test',
+                              black_cards: { text: data[0].text },
+                              profiles: { username: 'Test Judge' },
+                              status: 'submitting'
+                            });
+                            setError("Test black card loaded!");
+                          }
+                        }}
+                        className="px-2 py-1 bg-orange-600 text-white rounded text-xs"
+                      >
+                        Test Black Card
                       </button>
                     </div>
                   </div>
