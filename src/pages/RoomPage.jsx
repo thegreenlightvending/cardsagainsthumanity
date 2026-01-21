@@ -5,6 +5,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { ensureUserProfile } from "../utils/profileUtils";
 import { startGame, submitCard, selectWinner } from "../utils/gameUtils";
 
+// Simple round creation function for manual testing
 async function startNewRound(roomId, deckId, judgeId) {
   // Get a random black card
   const { data: blackCards, error: blackCardsError } = await supabase
@@ -683,21 +684,27 @@ export default function RoomPage() {
                       </button>
                       <button 
                         onClick={async () => {
-                          // Just show a random black card for testing
-                          const { data } = await supabase.from("black_cards").select("*").eq("deck_id", room.deck_id).limit(1);
-                          if (data && data[0]) {
-                            setCurrentRound({
-                              id: 'test',
-                              black_cards: { text: data[0].text },
-                              profiles: { username: 'Test Judge' },
-                              status: 'submitting'
-                            });
-                            setError("Test black card loaded!");
+                          // Create a REAL round for testing
+                          try {
+                            console.log("Creating real test round...");
+                            const judge = players.find(p => p.is_judge) || players[0];
+                            if (judge) {
+                              await startNewRound(roomId, room.deck_id, judge.profile_id);
+                              setTimeout(() => {
+                                loadCurrentRound();
+                                setError("Real round created!");
+                              }, 1000);
+                            } else {
+                              setError("No judge found for test round!");
+                            }
+                          } catch (err) {
+                            console.error("Test round creation failed:", err);
+                            setError("Test round failed: " + err.message);
                           }
                         }}
                         className="px-2 py-1 bg-orange-600 text-white rounded text-xs"
                       >
-                        Test Black Card
+                        Create Real Round
                       </button>
                       <button 
                         onClick={async () => {
