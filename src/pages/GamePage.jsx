@@ -174,8 +174,8 @@ export default function GamePage() {
       
       // Create first round
       console.log("Creating round with players:", updatedPlayers.map(p => ({ id: p.profile_id, is_judge: p.is_judge })));
-      await createRound(updatedPlayers);
-      console.log("Round created successfully");
+      const createdRound = await createRound(updatedPlayers);
+      console.log("Round created successfully:", createdRound);
       
       // Refresh game data to show the new round
       console.log("Refreshing game data...");
@@ -235,18 +235,37 @@ export default function GamePage() {
   }
 
   async function createRound(playersToUse = players) {
+    console.log("=== CREATE ROUND START ===");
+    console.log("Room ID:", roomId);
+    console.log("Room deck_id:", room?.deck_id);
+    console.log("Players to use:", playersToUse?.map(p => ({ id: p.profile_id, is_judge: p.is_judge })));
+
+    if (!room?.deck_id) {
+      throw new Error("No deck_id found in room");
+    }
+
     // Get random black card
-    const { data: blackCards } = await supabase
+    console.log("Fetching black cards for deck:", room.deck_id);
+    const { data: blackCards, error: blackCardError } = await supabase
       .from("black_cards")
       .select("id")
       .eq("deck_id", room.deck_id);
 
+    console.log("Black cards result:", { blackCards, blackCardError });
+
+    if (blackCardError) {
+      throw new Error("Failed to fetch black cards: " + blackCardError.message);
+    }
+
     if (!blackCards || blackCards.length === 0) {
-      throw new Error("No black cards found");
+      throw new Error("No black cards found for deck " + room.deck_id);
     }
 
     const randomCard = blackCards[Math.floor(Math.random() * blackCards.length)];
+    console.log("Selected black card:", randomCard);
+
     const judge = playersToUse.find(p => p.is_judge);
+    console.log("Found judge:", judge);
 
     if (!judge) {
       console.error("No judge found in players:", playersToUse.map(p => ({ id: p.profile_id, is_judge: p.is_judge })));
@@ -254,16 +273,28 @@ export default function GamePage() {
     }
 
     // Create round
-    const { error } = await supabase
+    const roundData = {
+      room_id: parseInt(roomId),
+      black_card_id: randomCard.id,
+      judge_profile_id: judge.profile_id,
+      status: "submitting"
+    };
+    
+    console.log("Creating round with data:", roundData);
+    
+    const { data: insertedRound, error: insertError } = await supabase
       .from("rounds")
-      .insert({
-        room_id: roomId,
-        black_card_id: randomCard.id,
-        judge_profile_id: judge.profile_id,
-        status: "submitting"
-      });
+      .insert(roundData)
+      .select();
 
-    if (error) throw error;
+    console.log("Round creation result:", { insertedRound, insertError });
+
+    if (insertError) {
+      throw new Error("Failed to create round: " + insertError.message);
+    }
+
+    console.log("=== CREATE ROUND SUCCESS ===");
+    return insertedRound;
   }
 
   async function submitCard(cardId) {
