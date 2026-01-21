@@ -22,6 +22,7 @@ export default function GamePage() {
   const [room, setRoom] = useState(null);
   const [players, setPlayers] = useState([]);
   const [currentRound, setCurrentRound] = useState(null);
+  const [hasActiveRound, setHasActiveRound] = useState(false);
   const [playerHand, setPlayerHand] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -90,8 +91,10 @@ export default function GamePage() {
         
         if (roundData && roundData.length > 0) {
           setCurrentRound(roundData[0]);
+          setHasActiveRound(true);
         } else {
           setCurrentRound(null);
+          setHasActiveRound(false);
         }
         // Load player hand
         const { data: handData } = await supabase
@@ -113,6 +116,7 @@ export default function GamePage() {
         }
       } else {
         setCurrentRound(null);
+        setHasActiveRound(false);
         setPlayerHand([]);
         setSubmissions([]);
       }
@@ -199,10 +203,13 @@ export default function GamePage() {
       // 4. CREATE ACTIVE ROUND
       const newRound = await createActiveRound(players[0].profile_id);
 
-      // 5. Update room status in state
+      // 5. Set active round to true
+      setHasActiveRound(true);
+
+      // 6. Update room status in state
       setRoom(prev => ({ ...prev, status: "playing" }));
       
-      // 6. Load the round we just created
+      // 7. Load the round we just created
       if (newRound) {
         // Get the full round with black card text
         const { data: fullRound } = await supabase
@@ -283,6 +290,8 @@ export default function GamePage() {
         status: "completed",  // Round is no longer active
         ended_at: new Date().toISOString()
       }).eq("id", currentRound.id);
+      
+      setHasActiveRound(false);
 
       // Update winner's score
       const { data: currentPlayer } = await supabase.from("room_players").select("score").eq("room_id", roomId).eq("profile_id", submission.profile_id).single();
@@ -329,6 +338,8 @@ export default function GamePage() {
 
       // CREATE NEW ACTIVE ROUND
       await createActiveRound(players[nextJudgeIndex].profile_id);
+      
+      setHasActiveRound(true);
 
       await loadGameData();
     } catch (err) {
