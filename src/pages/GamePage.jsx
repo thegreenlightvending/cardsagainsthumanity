@@ -251,9 +251,16 @@ export default function GamePage() {
         .eq("id", currentRound.id);
 
       // Update winner's score
+      const { data: currentPlayer } = await supabase
+        .from("room_players")
+        .select("score")
+        .eq("room_id", roomId)
+        .eq("profile_id", submission.profile_id)
+        .single();
+
       await supabase
         .from("room_players")
-        .update({ score: supabase.raw("score + 1") })
+        .update({ score: (currentPlayer?.score || 0) + 1 })
         .eq("room_id", roomId)
         .eq("profile_id", submission.profile_id);
 
