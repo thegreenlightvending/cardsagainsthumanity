@@ -124,6 +124,32 @@ export default function GamePage() {
     }
   }
 
+  // SINGLE FUNCTION TO CREATE ACTIVE ROUNDS
+  async function createActiveRound(judgeProfileId) {
+    console.log("🎯 Creating new active round...");
+    
+    // Get random black card
+    const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
+    if (!blackCards || blackCards.length === 0) {
+      throw new Error("No black cards found in deck");
+    }
+    
+    const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
+    console.log("Selected black card:", randomBlackCard.id);
+    
+    // Create active round
+    const { data: newRound, error } = await supabase.from("rounds").insert({
+      room_id: parseInt(roomId),
+      black_card_id: randomBlackCard.id,
+      judge_profile_id: judgeProfileId,
+      status: "active"
+    }).select();
+    
+    if (error) throw error;
+    console.log("✓ Active round created:", newRound[0]?.id);
+    return newRound[0];
+  }
+
   async function startGame() {
     try {
       console.log("🎮 START GAME CLICKED!");
@@ -141,25 +167,14 @@ export default function GamePage() {
       await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
       console.log("✓ Room set to playing");
 
-      // 2. DEAL BLACK CARD FIRST - This starts the active round immediately
-      console.log("2. Dealing black card to start active round...");
-      const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
-      console.log("Black cards found:", blackCards?.length);
-      if (!blackCards || blackCards.length === 0) {
-        throw new Error("No black cards found");
-      }
-      
-      const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
-      console.log("Selected black card:", randomBlackCard.id);
-
-      // 3. Set first player as judge
-      console.log("3. Setting judge...");
+      // 2. Set first player as judge
+      console.log("2. Setting judge...");
       await supabase.from("room_players").update({ is_judge: false }).eq("room_id", roomId);
       await supabase.from("room_players").update({ is_judge: true }).eq("room_id", roomId).eq("profile_id", players[0].profile_id);
       console.log("✓ Judge set:", players[0].profiles?.username);
 
-      // 4. Deal 10 cards to each player
-      console.log("3. Dealing cards...");
+      // 3. Deal 10 cards to each player
+      console.log("3. Dealing white cards...");
       await supabase.from("player_hands").delete().eq("room_id", roomId);
       
       const { data: whiteCards } = await supabase.from("white_cards").select("id").eq("deck_id", room.deck_id);
@@ -183,22 +198,13 @@ export default function GamePage() {
         }
       }
       await supabase.from("player_hands").insert(hands);
-      console.log("✓ Cards dealt to all players");
+      console.log("✓ White cards dealt to all players");
 
-      // 5. CREATE ACTIVE ROUND with the black card we selected
-      console.log("5. Creating active round with selected black card...");
-      const { data: insertedRound, error: roundError } = await supabase.from("rounds").insert({
-        room_id: parseInt(roomId),
-        black_card_id: randomBlackCard.id,
-        judge_profile_id: players[0].profile_id,
-        status: "active"  // Round is now ACTIVE - black card is dealt
-      }).select();
-      
-      console.log("Round creation result:", { insertedRound, roundError });
-      if (roundError) throw roundError;
-      console.log("✓ Active round created with black card!");
+      // 4. CREATE ACTIVE ROUND (this deals the black card)
+      console.log("4. Creating active round...");
+      await createActiveRound(players[0].profile_id);
 
-      // 6. Refresh game data
+      // 5. Refresh game data
       console.log("5. Refreshing game data...");
       await loadGameData();
       console.log("✓ Game data refreshed");
@@ -309,16 +315,8 @@ export default function GamePage() {
         }
       }
 
-      // START NEW ACTIVE ROUND - Deal new black card
-      const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
-      const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
-      
-      await supabase.from("rounds").insert({
-        room_id: parseInt(roomId),
-        black_card_id: randomBlackCard.id,
-        judge_profile_id: players[nextJudgeIndex].profile_id,
-        status: "active"  // New round is now ACTIVE
-      });
+      // CREATE NEW ACTIVE ROUND
+      await createActiveRound(players[nextJudgeIndex].profile_id);
 
       await loadGameData();
     } catch (err) {
