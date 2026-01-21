@@ -62,13 +62,17 @@ export default function RoomPage() {
     loadRoomData();
     
     // Poll for updates every 1 second for better responsiveness
-    const pollInterval = setInterval(() => {
-      loadMessages();
-      loadPlayers();
-      if (room?.status === "playing") {
-        loadCurrentRound();
-        loadPlayerHand();
-        loadSubmissions();
+    const pollInterval = setInterval(async () => {
+      try {
+        await loadMessages();
+        await loadPlayers();
+        if (room?.status === "playing") {
+          await loadCurrentRound();
+          await loadPlayerHand();
+          await loadSubmissions();
+        }
+      } catch (err) {
+        console.error("Polling error:", err);
       }
     }, 1000);
 
@@ -193,11 +197,15 @@ export default function RoomPage() {
         
         // Fallback: manually start a round if game start failed
         try {
+          console.log("Attempting fallback game start...");
+          
           // Make sure room is in playing status
+          console.log("Setting room status to playing...");
           await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
           
           // Make sure first player is judge
           if (players.length > 0) {
+            console.log("Setting judge to first player...");
             await supabase
               .from("room_players")
               .update({ is_judge: false })
@@ -208,10 +216,14 @@ export default function RoomPage() {
               .update({ is_judge: true })
               .eq("room_id", roomId)
               .eq("profile_id", players[0].profile_id);
+            
+            console.log("Judge set to:", players[0].profile_id);
           }
           
           // Start a round manually
+          console.log("Creating manual round...");
           await startNewRound(roomId, room.deck_id, players[0].profile_id);
+          console.log("Manual round created successfully");
           setError("Game started with manual round creation!");
         } catch (fallbackError) {
           console.error("Fallback failed:", fallbackError);
@@ -219,15 +231,20 @@ export default function RoomPage() {
         }
       }
       
-      // Reload all game data
-      setTimeout(async () => {
+      // Reload all game data multiple times to ensure it sticks
+      const reloadData = async () => {
         console.log("Reloading game data after start...");
         await loadRoomData();
         await loadCurrentRound();
         await loadPlayerHand();
         await loadPlayers();
         console.log("Game data reloaded");
-      }, 2000);
+      };
+      
+      // Reload immediately, then again after delays
+      setTimeout(reloadData, 500);
+      setTimeout(reloadData, 2000);
+      setTimeout(reloadData, 4000);
     } catch (err) {
       console.error("Game start error:", err);
       setError("Failed to start game: " + err.message);
@@ -681,6 +698,30 @@ export default function RoomPage() {
                         className="px-2 py-1 bg-orange-600 text-white rounded text-xs"
                       >
                         Test Black Card
+                      </button>
+                      <button 
+                        onClick={async () => {
+                          console.log("Checking all rounds in database...");
+                          const { data: allRounds } = await supabase
+                            .from("rounds")
+                            .select("*, black_cards(text), profiles(username)")
+                            .eq("room_id", roomId)
+                            .order("created_at", { ascending: false });
+                          
+                          console.log("All rounds found:", allRounds);
+                          
+                          if (allRounds && allRounds.length > 0) {
+                            const latestRound = allRounds[0];
+                            console.log("Latest round:", latestRound);
+                            setCurrentRound(latestRound);
+                            setError(`Found ${allRounds.length} rounds. Latest loaded!`);
+                          } else {
+                            setError("No rounds found in database!");
+                          }
+                        }}
+                        className="px-2 py-1 bg-red-600 text-white rounded text-xs"
+                      >
+                        Find Latest Round
                       </button>
                     </div>
                   </div>
