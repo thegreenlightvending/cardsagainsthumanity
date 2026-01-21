@@ -121,6 +121,68 @@ export default function GamePage() {
     }
   }
 
+  // Simple, direct start game function
+  async function simpleStartGame() {
+    try {
+      setError("Starting game...");
+      console.log("=== SIMPLE START GAME ===");
+
+      // 1. Set room to playing
+      await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
+      console.log("✓ Room set to playing");
+
+      // 2. Set first player as judge
+      await supabase.from("room_players").update({ is_judge: false }).eq("room_id", roomId);
+      await supabase.from("room_players").update({ is_judge: true }).eq("room_id", roomId).eq("profile_id", players[0].profile_id);
+      console.log("✓ Judge set:", players[0].profiles?.username);
+
+      // 3. Deal 10 cards to each player
+      await supabase.from("player_hands").delete().eq("room_id", roomId);
+      
+      const { data: whiteCards } = await supabase.from("white_cards").select("id").eq("deck_id", room.deck_id);
+      const shuffled = [...whiteCards].sort(() => Math.random() - 0.5);
+      
+      const hands = [];
+      let cardIndex = 0;
+      for (let i = 0; i < players.length; i++) {
+        for (let j = 0; j < 10; j++) {
+          hands.push({
+            room_id: roomId,
+            profile_id: players[i].profile_id,
+            white_card_id: shuffled[cardIndex].id
+          });
+          cardIndex++;
+        }
+      }
+      await supabase.from("player_hands").insert(hands);
+      console.log("✓ Cards dealt to all players");
+
+      // 4. Create round with black card
+      const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
+      const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
+      
+      await supabase.from("rounds").insert({
+        room_id: parseInt(roomId),
+        black_card_id: randomBlackCard.id,
+        judge_profile_id: players[0].profile_id,
+        status: "submitting"
+      });
+      console.log("✓ Round created with black card");
+
+      // 5. Refresh everything
+      await loadGameData();
+      console.log("✓ Game data refreshed");
+
+      setError("Game started!");
+      setTimeout(() => setError(""), 2000);
+      
+    } catch (err) {
+      console.error("Simple start game error:", err);
+      setError("Failed to start: " + err.message);
+    }
+  }
+
+  // Keep the old complex function for reference
   async function startGame() {
     try {
       setError("Starting game...");
@@ -548,7 +610,7 @@ export default function GamePage() {
                 <p className="text-zinc-400 mb-6">Need at least 3 players to start</p>
                 {isHost && (
                   <button
-                    onClick={startGame}
+                    onClick={simpleStartGame}
                     disabled={players.length < 3}
                     className={`px-6 py-3 rounded-lg font-bold ${
                       players.length >= 3
