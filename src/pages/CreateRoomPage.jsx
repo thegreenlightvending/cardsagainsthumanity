@@ -31,18 +31,25 @@ export default function CreateRoomPage() {
 
   async function loadDecks() {
     try {
+      console.log("Loading decks...");
       const { data, error } = await supabase
         .from("decks")
         .select("*")
         .order("name");
       
-      if (error) throw error;
+      if (error) {
+        console.error("Deck loading error:", error);
+        throw error;
+      }
+      
+      console.log("Loaded decks:", data);
       setDecks(data || []);
       if (data?.length > 0) {
         setSelectedDeck(data[0].id.toString());
       }
     } catch (err) {
-      setError("Failed to load decks");
+      console.error("Failed to load decks:", err);
+      setError("Failed to load decks: " + err.message);
     }
   }
 
@@ -220,6 +227,17 @@ export default function CreateRoomPage() {
           {error && (
             <div className="bg-red-950/40 border border-red-900 rounded-lg px-4 py-3 text-red-200">
               {error}
+              <button 
+                onClick={async () => {
+                  console.log("Manual deck check...");
+                  const { data, error } = await supabase.from("decks").select("*");
+                  console.log("Manual deck result:", { data, error });
+                  alert(`Decks: ${data?.length || 0}, Error: ${error?.message || 'None'}`);
+                }}
+                className="ml-3 px-2 py-1 bg-blue-600 text-white rounded text-xs"
+              >
+                Debug Decks
+              </button>
             </div>
           )}
 
