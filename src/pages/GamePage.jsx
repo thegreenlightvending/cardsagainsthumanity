@@ -3,6 +3,16 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../auth/AuthProvider";
 
+/*
+ * ACTIVE ROUND DEFINITION:
+ * - START: When a black card is dealt (status: "active")
+ * - END: When judge picks winning card (status: "completed")
+ * 
+ * Only one round can be active at a time per room.
+ * Players submit cards during active rounds.
+ * Judge picks winner to end the active round.
+ */
+
 export default function GamePage() {
   const { roomId } = useParams();
   const navigate = useNavigate();
@@ -61,19 +71,20 @@ export default function GamePage() {
 
       // If game is playing, load game data
       if (roomData?.status === "playing") {
-        // Load current round
-        const { data: roundData } = await supabase
-          .from("rounds")
-          .select("*, black_cards(text), profiles!judge_profile_id(username)")
-          .eq("room_id", roomId)
-          .order("created_at", { ascending: false })
-          .limit(1);
-        
-        if (roundData && roundData.length > 0) {
-          setCurrentRound(roundData[0]);
-        } else {
-          setCurrentRound(null);
-        }
+      // Load ACTIVE round (black card dealt, judge hasn't picked winner yet)
+      const { data: roundData } = await supabase
+        .from("rounds")
+        .select("*, black_cards(text), profiles!judge_profile_id(username)")
+        .eq("room_id", roomId)
+        .eq("status", "active")  // Only get active rounds
+        .order("created_at", { ascending: false })
+        .limit(1);
+      
+      if (roundData && roundData.length > 0) {
+        setCurrentRound(roundData[0]);
+      } else {
+        setCurrentRound(null);
+      }
 
         // Load player hand
         const { data: handData } = await supabase
@@ -152,7 +163,7 @@ export default function GamePage() {
       }
       await supabase.from("player_hands").insert(hands);
 
-      // 4. Create round with black card
+      // 4. START ACTIVE ROUND - Deal black card (this begins the round)
       const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
       if (!blackCards || blackCards.length === 0) {
         throw new Error("No black cards found");
@@ -163,7 +174,7 @@ export default function GamePage() {
         room_id: parseInt(roomId),
         black_card_id: randomBlackCard.id,
         judge_profile_id: players[0].profile_id,
-        status: "submitting"
+        status: "active"  // Round is now ACTIVE - black card is dealt
       });
 
       // 5. Refresh game data
@@ -225,10 +236,11 @@ export default function GamePage() {
 
       if (!submission) throw new Error("Submission not found");
 
-      // Update round as completed
+      // END ACTIVE ROUND - Judge has picked winner
       await supabase.from("rounds").update({
         winner_profile_id: submission.profile_id,
-        status: "completed"
+        status: "completed",  // Round is no longer active
+        ended_at: new Date().toISOString()
       }).eq("id", currentRound.id);
 
       // Update winner's score
@@ -274,7 +286,7 @@ export default function GamePage() {
         }
       }
 
-      // Create new round
+      // START NEW ACTIVE ROUND - Deal new black card
       const { data: blackCards } = await supabase.from("black_cards").select("id").eq("deck_id", room.deck_id);
       const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
       
@@ -282,7 +294,7 @@ export default function GamePage() {
         room_id: parseInt(roomId),
         black_card_id: randomBlackCard.id,
         judge_profile_id: players[nextJudgeIndex].profile_id,
-        status: "submitting"
+        status: "active"  // New round is now ACTIVE
       });
 
       await loadGameData();
@@ -433,17 +445,23 @@ export default function GamePage() {
                     )}
                   </div>
                   
-                  {/* GAME STATUS */}
+                  {/* ACTIVE ROUND STATUS */}
                   <div className="bg-zinc-800 rounded-lg p-4">
                     {currentRound ? (
-                      <p className="text-lg text-zinc-300">
-                        Cards Submitted: {submissions.length} / {players.filter(p => !p.is_judge).length}
+                      <div className="text-center">
+                        <p className="text-green-400 font-bold mb-2">🎯 ACTIVE ROUND</p>
+                        <p className="text-lg text-zinc-300">
+                          Cards Submitted: {submissions.length} / {players.filter(p => !p.is_judge).length}
+                        </p>
                         {submissions.length === players.filter(p => !p.is_judge).length && (
-                          <span className="text-yellow-400 ml-2">• Judge is choosing winner!</span>
+                          <p className="text-yellow-400 mt-2">• Judge is choosing winner to end this round!</p>
                         )}
-                      </p>
+                      </div>
                     ) : (
-                      <p className="text-red-400">No active round - click Refresh Game above</p>
+                      <div className="text-center">
+                        <p className="text-red-400 font-bold">❌ NO ACTIVE ROUND</p>
+                        <p className="text-zinc-400 text-sm">Black card not dealt yet</p>
+                      </div>
                     )}
                   </div>
                 </div>
