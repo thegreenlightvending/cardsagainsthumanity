@@ -149,6 +149,9 @@ export default function GamePage() {
     
     const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
     
+    // Set active round to true immediately when black card is randomized
+    setHasActiveRound(true);
+    
     // Create active round
     const { data: newRound, error } = await supabase.from("rounds").insert({
       room_id: roomId,
