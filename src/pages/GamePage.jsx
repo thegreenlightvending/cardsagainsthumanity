@@ -5,11 +5,11 @@ import { useAuth } from "../auth/AuthProvider";
 
 /*
  * ACTIVE ROUND DEFINITION:
- * - START: When a black card is dealt (status: "active")
+ * - START: When a black card is dealt (status: "submitting")
  * - END: When judge picks winning card (status: "completed")
  * 
  * Only one round can be active at a time per room.
- * Players submit cards during active rounds.
+ * Players submit cards during active rounds (status: "submitting").
  * Judge picks winner to end the active round.
  */
 
@@ -80,7 +80,7 @@ export default function GamePage() {
             profiles!judge_profile_id(username)
           `)
           .eq("room_id", roomId)
-          .eq("status", "active")
+          .eq("status", "submitting")
           .order("created_at", { ascending: false })
           .limit(1);
         
@@ -150,7 +150,7 @@ export default function GamePage() {
       room_id: roomId,
       black_card_id: randomBlackCard.id,
       judge_profile_id: judgeProfileId,
-      status: "active"
+      status: "submitting"
     }).select();
     
     if (error) throw error;
