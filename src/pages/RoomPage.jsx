@@ -5,6 +5,34 @@ import { useAuth } from "../auth/AuthProvider";
 import { ensureUserProfile } from "../utils/profileUtils";
 import { startGame, submitCard, selectWinner } from "../utils/gameUtils";
 
+async function startNewRound(roomId, deckId, judgeId) {
+  // Get a random black card
+  const { data: blackCards, error: blackCardsError } = await supabase
+    .from("black_cards")
+    .select("id")
+    .eq("deck_id", deckId);
+
+  if (blackCardsError) throw blackCardsError;
+
+  if (!blackCards || blackCards.length === 0) {
+    throw new Error("No black cards found for this deck");
+  }
+
+  const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
+
+  // Create the round
+  const { error: roundError } = await supabase
+    .from("rounds")
+    .insert({
+      room_id: roomId,
+      black_card_id: randomBlackCard.id,
+      judge_profile_id: judgeId,
+      status: "submitting"
+    });
+
+  if (roundError) throw roundError;
+}
+
 export default function RoomPage() {
   const { roomId } = useParams();
   const navigate = useNavigate();
@@ -239,12 +267,119 @@ export default function RoomPage() {
 
   async function handleSubmitCard(whiteCardId) {
     try {
+      if (!currentRound) {
+        setError("No active round found. Please wait for the round to start.");
+        return;
+      }
+      
+      console.log("Submitting card:", whiteCardId, "for round:", currentRound.id);
       await submitCard(currentRound.id, user.id, whiteCardId);
       setError("Card submitted!");
       loadPlayerHand();
       loadSubmissions();
     } catch (err) {
+      console.error("Card submission error:", err);
       setError("Failed to submit card: " + err.message);
+    }
+  }
+
+  async function handleSelectWinner(submissionId) {
+    try {
+      if (!currentRound) {
+        setError("No active round found.");
+        return;
+      }
+
+      console.log("Selecting winner:", submissionId);
+      await selectWinner(currentRound.id, submissionId, user.id);
+      setError("Winner selected! Starting next round...");
+      
+      // Start next round after a short delay
+      setTimeout(async () => {
+        await startNextRound();
+        loadRoomData();
+        loadCurrentRound();
+        loadPlayerHand();
+      }, 3000);
+    } catch (err) {
+      console.error("Winner selection error:", err);
+      setError("Failed to select winner: " + err.message);
+    }
+  }
+
+  async function startNextRound() {
+    try {
+      // Get current players and rotate judge
+      const nonJudgePlayers = players.filter(p => !p.is_judge);
+      const currentJudge = players.find(p => p.is_judge);
+      
+      if (nonJudgePlayers.length === 0) return;
+      
+      // Find next judge (rotate)
+      const currentJudgeIndex = players.findIndex(p => p.profile_id === currentJudge.profile_id);
+      const nextJudgeIndex = (currentJudgeIndex + 1) % players.length;
+      const nextJudge = players[nextJudgeIndex];
+
+      // Update judge
+      await supabase
+        .from("room_players")
+        .update({ is_judge: false })
+        .eq("room_id", roomId);
+
+      await supabase
+        .from("room_players")
+        .update({ is_judge: true })
+        .eq("room_id", roomId)
+        .eq("profile_id", nextJudge.profile_id);
+
+      // Deal new cards to players who need them (should have 7)
+      await dealNewCards();
+
+      // Start new round
+      await startNewRound(roomId, room.deck_id, nextJudge.profile_id);
+    } catch (err) {
+      console.error("Failed to start next round:", err);
+    }
+  }
+
+  async function dealNewCards() {
+    try {
+      // Check each player's hand and deal cards to get back to 7
+      for (const player of players) {
+        const { data: hand } = await supabase
+          .from("player_hands")
+          .select("id")
+          .eq("room_id", roomId)
+          .eq("profile_id", player.profile_id);
+
+        const cardsNeeded = 7 - (hand?.length || 0);
+        
+        if (cardsNeeded > 0) {
+          // Get random white cards
+          const { data: availableCards } = await supabase
+            .from("white_cards")
+            .select("id")
+            .eq("deck_id", room.deck_id)
+            .limit(cardsNeeded * 2); // Get extra to avoid duplicates
+
+          if (availableCards && availableCards.length > 0) {
+            const shuffled = availableCards.sort(() => Math.random() - 0.5);
+            const cardsToAdd = shuffled.slice(0, cardsNeeded);
+
+            const newCards = cardsToAdd.map(card => ({
+              room_id: roomId,
+              profile_id: player.profile_id,
+              white_card_id: card.id
+            }));
+
+            await supabase
+              .from("player_hands")
+              .insert(newCards);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to deal new cards:", err);
     }
   }
 
@@ -536,10 +671,10 @@ export default function RoomPage() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           {submissions.map((submission, index) => (
                             <div key={submission.id} className="relative group">
-                              <button
-                                onClick={() => selectWinner(currentRound.id, submission.id, user.id)}
-                                className="w-full bg-white text-black p-4 rounded-lg text-left hover:bg-yellow-100 transition-all transform hover:scale-105 shadow-lg border-2 border-gray-200 hover:border-yellow-400 min-h-[120px] flex items-center justify-center"
-                              >
+                            <button
+                              onClick={() => handleSelectWinner(submission.id)}
+                              className="w-full bg-white text-black p-4 rounded-lg text-left hover:bg-yellow-100 transition-all transform hover:scale-105 shadow-lg border-2 border-gray-200 hover:border-yellow-400 min-h-[120px] flex items-center justify-center"
+                            >
                                 <span className="text-sm font-medium leading-tight">
                                   {submission.white_cards?.text}
                                 </span>
