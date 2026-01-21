@@ -62,15 +62,25 @@ export default function GamePage() {
       // If game is playing, load game data
       if (roomData?.status === "playing") {
         // Load current round (get the latest round regardless of status)
-        const { data: roundData } = await supabase
+        const { data: roundData, error: roundError } = await supabase
           .from("rounds")
           .select("*, black_cards(text), profiles!judge_profile_id(username)")
           .eq("room_id", roomId)
           .order("created_at", { ascending: false })
           .limit(1);
         
+        console.log("Round loading:", { roundData, roundError, roomStatus: roomData?.status });
+        
+        if (roundError) {
+          console.error("Round load error:", roundError);
+        }
+        
         if (roundData && roundData.length > 0) {
+          console.log("Setting current round:", roundData[0]);
           setCurrentRound(roundData[0]);
+        } else {
+          console.log("No rounds found for room", roomId);
+          setCurrentRound(null);
         }
 
         // Load player hand
@@ -163,10 +173,14 @@ export default function GamePage() {
       await dealCards(updatedPlayers);
       
       // Create first round
+      console.log("Creating round with players:", updatedPlayers.map(p => ({ id: p.profile_id, is_judge: p.is_judge })));
       await createRound(updatedPlayers);
+      console.log("Round created successfully");
       
       // Refresh game data to show the new round
+      console.log("Refreshing game data...");
       await loadGameData();
+      console.log("Game data refreshed");
       
       setError("Game started!");
       setTimeout(() => setError(""), 2000);
@@ -517,8 +531,24 @@ export default function GamePage() {
               </div>
             ) : (
               <div className="space-y-6">
+                {/* Debug Info */}
+                <div className="bg-red-900/20 border border-red-700 rounded-lg p-4 text-sm">
+                  <h4 className="font-bold mb-2">Debug Info:</h4>
+                  <p>Room Status: {room?.status}</p>
+                  <p>Current Round: {currentRound ? "Yes" : "No"}</p>
+                  <p>Round ID: {currentRound?.id || "None"}</p>
+                  <p>Black Card: {currentRound?.black_cards?.text || "None"}</p>
+                  <p>Judge: {currentRound?.profiles?.username || "None"}</p>
+                  <button 
+                    onClick={loadGameData}
+                    className="mt-2 px-3 py-1 bg-blue-600 rounded text-xs"
+                  >
+                    Force Refresh
+                  </button>
+                </div>
+
                 {/* Black Card */}
-                {currentRound && (
+                {currentRound ? (
                   <div className="text-center">
                     <div className="bg-black rounded-lg p-6 mb-4">
                       <h3 className="text-lg font-bold mb-3 text-white">Black Card</h3>
@@ -533,6 +563,26 @@ export default function GamePage() {
                         <span className="text-yellow-400 ml-2">• Judge is choosing winner...</span>
                       )}
                     </p>
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <h2 className="text-xl font-bold mb-4 text-red-400">No Active Round</h2>
+                    <p className="text-zinc-400 mb-4">Round should have been created when game started</p>
+                    <button
+                      onClick={async () => {
+                        try {
+                          console.log("Manual round creation...");
+                          await createRound();
+                          await loadGameData();
+                        } catch (err) {
+                          console.error("Manual round creation failed:", err);
+                          setError("Failed to create round: " + err.message);
+                        }
+                      }}
+                      className="px-4 py-2 bg-red-600 rounded hover:bg-red-500"
+                    >
+                      Create Round Manually
+                    </button>
                   </div>
                 )}
 
