@@ -243,7 +243,8 @@ export default function GamePage() {
 
   async function submitCard(cardId) {
     try {
-      if (!currentRound) {
+      // Check if round is active
+      if (!hasActiveRound || !currentRound) {
         setError("No active round");
         return;
       }
@@ -267,6 +268,14 @@ export default function GamePage() {
         .eq("white_card_id", cardId);
 
       if (removeError) throw removeError;
+
+      // Refresh submissions so judge sees the new card immediately
+      const { data: submissionsData } = await supabase
+        .from("submissions")
+        .select("*, white_cards(text), profiles(username)")
+        .eq("round_id", currentRound.id);
+      
+      if (submissionsData) setSubmissions(submissionsData);
 
       setError("Card submitted!");
       setTimeout(() => setError(""), 2000);
@@ -539,38 +548,33 @@ export default function GamePage() {
                   )}
                 </div>
 
-                {/* Submissions Area */}
-                {isJudge && (
-                  <div>
-                    <h3 className="font-bold mb-3">
+                {/* Submissions Area - Judge View */}
+                {isJudge && hasActiveRound && (
+                  <div className="bg-zinc-800 rounded-lg p-4">
+                    <h3 className="text-xl font-bold mb-4 text-center">
                       Submitted Cards ({submissions.length} / {players.filter(p => !p.is_judge).length})
                     </h3>
-                    {submissions.length === 0 && (
+                    {submissions.length === 0 ? (
                       <p className="text-zinc-400 text-center py-6">Waiting for players to submit cards...</p>
-                    )}
-                    {submissions.length > 0 && submissions.length < players.filter(p => !p.is_judge).length && (
-                      <div className="space-y-2">
-                        <p className="text-zinc-400 text-center">Cards submitted so far:</p>
-                        {submissions.map((submission, index) => (
-                          <div key={submission.id} className="bg-white text-black p-3 rounded opacity-75">
-                            Card #{index + 1}: {submission.white_cards?.text}
-                          </div>
-                        ))}
-                        <p className="text-yellow-400 text-center">Waiting for more submissions...</p>
-                      </div>
-                    )}
-                    {submissions.length === players.filter(p => !p.is_judge).length && (
+                    ) : (
                       <div>
-                        <p className="text-green-400 text-center mb-4">All cards submitted! Choose the winner:</p>
+                        {submissions.length < players.filter(p => !p.is_judge).length && (
+                          <p className="text-yellow-400 text-center mb-4">
+                            {players.filter(p => !p.is_judge).length - submissions.length} more card(s) coming...
+                          </p>
+                        )}
+                        {submissions.length === players.filter(p => !p.is_judge).length && (
+                          <p className="text-green-400 text-center mb-4 font-bold">All cards submitted! Choose the winner:</p>
+                        )}
                         <div className="grid grid-cols-1 gap-3">
                           {submissions.map((submission, index) => (
                             <button
                               key={submission.id}
                               onClick={() => selectWinner(submission.id)}
-                              className="bg-white text-black p-4 rounded text-left hover:bg-yellow-100 border-2 border-transparent hover:border-yellow-400"
+                              className="bg-white text-black p-4 rounded-lg text-left hover:bg-yellow-100 border-2 border-transparent hover:border-yellow-400 transition-all"
                             >
-                              <div className="font-bold mb-1">Card #{index + 1}</div>
-                              <div>{submission.white_cards?.text}</div>
+                              <div className="font-bold mb-1 text-sm text-zinc-600">Card #{index + 1}</div>
+                              <div className="text-lg">{submission.white_cards?.text}</div>
                             </button>
                           ))}
                         </div>
