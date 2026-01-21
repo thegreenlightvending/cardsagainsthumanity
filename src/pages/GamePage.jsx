@@ -147,7 +147,7 @@ export default function GamePage() {
     
     // Create active round
     const { data: newRound, error } = await supabase.from("rounds").insert({
-      room_id: parseInt(roomId),
+      room_id: roomId,
       black_card_id: randomBlackCard.id,
       judge_profile_id: judgeProfileId,
       status: "active"
