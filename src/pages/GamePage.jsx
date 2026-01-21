@@ -93,16 +93,19 @@ export default function GamePage() {
           setCurrentRound(roundData[0]);
           setHasActiveRound(true);
         } else {
-          // If hasActiveRound is true but no round found, keep it true (round might be loading)
-          // Only clear if we're certain there's no round (room not playing)
+          // If room is not playing, clear everything
           if (roomData?.status !== "playing") {
             setCurrentRound(null);
             setHasActiveRound(false);
-          } else if (!hasActiveRound) {
-            // Only clear currentRound if hasActiveRound is also false
-            setCurrentRound(null);
+          } else {
+            // Room is playing but no round found
+            // If hasActiveRound is true, keep it (round might be loading)
+            // If hasActiveRound is false, clear currentRound
+            if (!hasActiveRound) {
+              setCurrentRound(null);
+            }
+            // If hasActiveRound is true, don't clear currentRound (it might be set by startGame)
           }
-          // If hasActiveRound is true and room is playing, keep currentRound as is
         }
         // Load player hand
         const { data: handData } = await supabase
@@ -281,9 +284,49 @@ export default function GamePage() {
 
   async function submitCard(cardId) {
     try {
-      // Check if round is active
-      if (!hasActiveRound || !currentRound) {
+      // If currentRound is null but hasActiveRound is true, try to fetch it
+      let roundToUse = currentRound;
+      
+      if (!roundToUse && hasActiveRound && room?.status === "playing") {
+        // Try to fetch the active round
+        const { data: roundData, error: roundError } = await supabase
+          .from("rounds")
+          .select(`
+            *,
+            black_cards(text),
+            profiles!judge_profile_id(username)
+          `)
+          .eq("room_id", roomId)
+          .eq("status", "submitting")
+          .order("id", { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (roundError || !roundData) {
+          setError("No active round found. Please wait for the round to start.");
+          return;
+        }
+        
+        roundToUse = roundData;
+        setCurrentRound(roundData);
+      }
+
+      // Final check
+      if (!roundToUse) {
         setError("No active round");
+        return;
+      }
+
+      // Check if user already submitted
+      const { data: existingSubmission } = await supabase
+        .from("submissions")
+        .select("id")
+        .eq("round_id", roundToUse.id)
+        .eq("profile_id", user.id)
+        .single();
+      
+      if (existingSubmission) {
+        setError("You already submitted a card for this round");
         return;
       }
 
@@ -291,7 +334,7 @@ export default function GamePage() {
       const { error: submitError } = await supabase
         .from("submissions")
         .insert({
-          round_id: currentRound.id,
+          round_id: roundToUse.id,
           profile_id: user.id,
           white_card_id: cardId
         });
@@ -303,7 +346,8 @@ export default function GamePage() {
         .from("player_hands")
         .delete()
         .eq("profile_id", user.id)
-        .eq("white_card_id", cardId);
+        .eq("white_card_id", cardId)
+        .eq("room_id", roomId);
 
       if (removeError) throw removeError;
 
@@ -311,9 +355,12 @@ export default function GamePage() {
       const { data: submissionsData } = await supabase
         .from("submissions")
         .select("*, white_cards(text), profiles(username)")
-        .eq("round_id", currentRound.id);
+        .eq("round_id", roundToUse.id);
       
       if (submissionsData) setSubmissions(submissionsData);
+
+      // Refresh player hand
+      await loadGameData();
 
       setError("Card submitted!");
       setTimeout(() => setError(""), 2000);
