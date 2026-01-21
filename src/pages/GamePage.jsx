@@ -605,6 +605,7 @@ export default function GamePage() {
         <div className="lg:col-span-2">
           <div className="bg-zinc-900 rounded-lg p-6">
             {room.status === "waiting" ? (
+              /* WAITING FOR GAME TO START */
               <div className="text-center py-12">
                 <h2 className="text-2xl font-bold mb-4">Waiting for Game</h2>
                 <p className="text-zinc-400 mb-6">Need at least 3 players to start</p>
@@ -623,93 +624,92 @@ export default function GamePage() {
                 )}
               </div>
             ) : (
+              /* GAME IS PLAYING - ALWAYS SHOW BLACK CARD AREA */
               <div className="space-y-6">
-                {/* Debug Info */}
-                <div className="bg-red-900/20 border border-red-700 rounded-lg p-4 text-sm">
-                  <h4 className="font-bold mb-2">Debug Info:</h4>
-                  <p>Room Status: {room?.status}</p>
-                  <p>Current Round: {currentRound ? "Yes" : "No"}</p>
-                  <p>Round ID: {currentRound?.id || "None"}</p>
-                  <p>Black Card: {currentRound?.black_cards?.text || "None"}</p>
-                  <p>Judge: {currentRound?.profiles?.username || "None"}</p>
-                  <button 
-                    onClick={loadGameData}
-                    className="mt-2 px-3 py-1 bg-blue-600 rounded text-xs"
-                  >
-                    Force Refresh
-                  </button>
+                {/* BLACK CARD - ALWAYS VISIBLE WHEN PLAYING */}
+                <div className="text-center">
+                  <div className="bg-black rounded-lg p-8 mb-4 border-2 border-white">
+                    <h3 className="text-2xl font-bold mb-4 text-white">Black Card</h3>
+                    {currentRound?.black_cards?.text ? (
+                      <>
+                        <p className="text-2xl text-white mb-4">{currentRound.black_cards.text}</p>
+                        <p className="text-lg text-purple-300">
+                          Judge: {currentRound.profiles?.username || "Loading..."}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-xl text-red-300 mb-4">Loading black card...</p>
+                        <button 
+                          onClick={loadGameData}
+                          className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500"
+                        >
+                          Refresh Game
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  
+                  {/* GAME STATUS */}
+                  <div className="bg-zinc-800 rounded-lg p-4">
+                    {currentRound ? (
+                      <p className="text-lg text-zinc-300">
+                        Cards Submitted: {submissions.length} / {players.filter(p => !p.is_judge).length}
+                        {submissions.length === players.filter(p => !p.is_judge).length && (
+                          <span className="text-yellow-400 ml-2">• Judge is choosing winner!</span>
+                        )}
+                      </p>
+                    ) : (
+                      <p className="text-red-400">No active round - click Refresh Game above</p>
+                    )}
+                  </div>
                 </div>
 
-                {/* Black Card */}
-                {currentRound ? (
-                  <div className="text-center">
-                    <div className="bg-black rounded-lg p-6 mb-4">
-                      <h3 className="text-lg font-bold mb-3 text-white">Black Card</h3>
-                      <p className="text-xl text-white">{currentRound.black_cards?.text}</p>
-                      <p className="text-sm text-zinc-400 mt-2">
-                        Judge: {currentRound.profiles?.username}
-                      </p>
-                    </div>
-                    <p className="text-zinc-400">
-                      {submissions.length} / {players.filter(p => !p.is_judge).length} cards submitted
-                      {submissions.length === players.filter(p => !p.is_judge).length && (
-                        <span className="text-yellow-400 ml-2">• Judge is choosing winner...</span>
+                {/* YOUR CARDS */}
+                <div className="bg-zinc-800 rounded-lg p-4">
+                  {playerHand.length > 0 ? (
+                    <>
+                      <h3 className="text-xl font-bold mb-4 text-center">
+                        Your Cards ({playerHand.length}/10)
+                        {isJudge && <span className="text-purple-400 ml-2">(You are the Judge)</span>}
+                      </h3>
+                      <div className="grid grid-cols-2 gap-3">
+                        {playerHand.map((card) => (
+                          <button
+                            key={card.id}
+                            onClick={() => !isJudge && submitCard(card.white_card_id)}
+                            disabled={isJudge || hasSubmitted}
+                            className={`p-4 rounded-lg text-sm font-medium transition-all ${
+                              isJudge 
+                                ? "bg-gray-600 text-gray-300 cursor-not-allowed" 
+                                : hasSubmitted
+                                ? "bg-green-200 text-green-800 cursor-not-allowed"
+                                : "bg-white text-black hover:bg-yellow-100 hover:scale-105 shadow-lg"
+                            }`}
+                          >
+                            {card.white_cards?.text}
+                          </button>
+                        ))}
+                      </div>
+                      {hasSubmitted && !isJudge && (
+                        <p className="text-green-400 text-center mt-4 text-lg font-bold">✓ Card Submitted!</p>
                       )}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="text-center py-12">
-                    <h2 className="text-xl font-bold mb-4 text-red-400">No Active Round</h2>
-                    <p className="text-zinc-400 mb-4">Round should have been created when game started</p>
-                    <button
-                      onClick={async () => {
-                        try {
-                          console.log("Manual round creation...");
-                          await createRound();
-                          await loadGameData();
-                        } catch (err) {
-                          console.error("Manual round creation failed:", err);
-                          setError("Failed to create round: " + err.message);
-                        }
-                      }}
-                      className="px-4 py-2 bg-red-600 rounded hover:bg-red-500"
-                    >
-                      Create Round Manually
-                    </button>
-                  </div>
-                )}
-
-                {/* Player Hand */}
-                {playerHand.length > 0 && (
-                  <div>
-                    <h3 className="font-bold mb-3">
-                      Your Cards ({playerHand.length})
-                      {isJudge && <span className="text-purple-400 ml-2">(You are the Judge)</span>}
-                    </h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      {playerHand.map((card) => (
-                        <button
-                          key={card.id}
-                          onClick={() => !isJudge && submitCard(card.white_card_id)}
-                          disabled={isJudge || hasSubmitted}
-                          className={`p-3 rounded text-sm ${
-                            isJudge 
-                              ? "bg-gray-600 text-gray-300 cursor-not-allowed" 
-                              : "bg-white text-black hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                          }`}
-                        >
-                          {card.white_cards?.text}
-                        </button>
-                      ))}
+                      {isJudge && (
+                        <p className="text-purple-400 text-center mt-4 text-lg">You are judging this round - wait for submissions</p>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-zinc-400 text-lg">No cards in hand</p>
+                      <button 
+                        onClick={loadGameData}
+                        className="mt-3 px-4 py-2 bg-blue-600 rounded hover:bg-blue-500"
+                      >
+                        Refresh Cards
+                      </button>
                     </div>
-                    {hasSubmitted && !isJudge && (
-                      <p className="text-green-400 text-center mt-3">✓ Card submitted!</p>
-                    )}
-                    {isJudge && (
-                      <p className="text-purple-400 text-center mt-3">You are judging this round</p>
-                    )}
-                  </div>
-                )}
+                  )}
+                </div>
 
                 {/* Submissions Area */}
                 {isJudge && (
