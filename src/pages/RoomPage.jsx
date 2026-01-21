@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../auth/AuthProvider";
 import { ensureUserProfile } from "../utils/profileUtils";
+import { startGame, submitCard, selectWinner } from "../utils/gameUtils";
 
 export default function RoomPage() {
   const { roomId } = useParams();
@@ -22,6 +23,9 @@ export default function RoomPage() {
   const [newMessage, setNewMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [currentRound, setCurrentRound] = useState(null);
+  const [playerHand, setPlayerHand] = useState([]);
+  const [submissions, setSubmissions] = useState([]);
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -33,6 +37,11 @@ export default function RoomPage() {
     const pollInterval = setInterval(() => {
       loadMessages();
       loadPlayers();
+      if (room?.status === "playing") {
+        loadCurrentRound();
+        loadPlayerHand();
+        loadSubmissions();
+      }
     }, 2000);
 
     return () => {
@@ -140,19 +149,85 @@ export default function RoomPage() {
     }
   }
 
-  async function startGame() {
+  async function handleStartGame() {
     try {
-      const { error } = await supabase
-        .from("rooms")
-        .update({ status: "playing" })
-        .eq("id", roomId);
-
-      if (error) throw error;
-      
-      // TODO: Initialize first round
-      setError("Game starting... (game logic coming next!)");
+      await startGame(roomId, room.deck_id);
+      setError("Game started! First round beginning...");
+      // Reload room data to reflect new status
+      loadRoomData();
     } catch (err) {
       setError("Failed to start game: " + err.message);
+    }
+  }
+
+  async function loadCurrentRound() {
+    try {
+      const { data, error } = await supabase
+        .from("rounds")
+        .select(`
+          *,
+          black_cards(text, pick),
+          profiles!judge_profile_id(username)
+        `)
+        .eq("room_id", roomId)
+        .eq("status", "submitting")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      setCurrentRound(data);
+    } catch (err) {
+      console.error("Failed to load current round:", err);
+    }
+  }
+
+  async function loadPlayerHand() {
+    try {
+      const { data, error } = await supabase
+        .from("player_hands")
+        .select(`
+          *,
+          white_cards(text)
+        `)
+        .eq("room_id", roomId)
+        .eq("profile_id", user.id);
+
+      if (error) throw error;
+      setPlayerHand(data || []);
+    } catch (err) {
+      console.error("Failed to load player hand:", err);
+    }
+  }
+
+  async function loadSubmissions() {
+    if (!currentRound) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from("submissions")
+        .select(`
+          *,
+          white_cards(text),
+          profiles(username)
+        `)
+        .eq("round_id", currentRound.id);
+
+      if (error) throw error;
+      setSubmissions(data || []);
+    } catch (err) {
+      console.error("Failed to load submissions:", err);
+    }
+  }
+
+  async function handleSubmitCard(whiteCardId) {
+    try {
+      await submitCard(currentRound.id, user.id, whiteCardId);
+      setError("Card submitted!");
+      loadPlayerHand();
+      loadSubmissions();
+    } catch (err) {
+      setError("Failed to submit card: " + err.message);
     }
   }
 
@@ -219,7 +294,7 @@ export default function RoomPage() {
           <div className="flex gap-2">
             {isHost && room.status === "waiting" && players.length >= 3 && (
               <button
-                onClick={startGame}
+                onClick={handleStartGame}
                 className="px-4 py-2 bg-emerald-600 rounded-lg hover:bg-emerald-500 transition-colors"
               >
                 Start Game
@@ -288,11 +363,72 @@ export default function RoomPage() {
                 )}
               </div>
             ) : (
-              <div className="text-center py-12">
-                <h2 className="text-2xl font-bold mb-4">Game in Progress</h2>
-                <p className="text-zinc-400">
-                  Game logic will be implemented here next!
-                </p>
+              <div className="space-y-6">
+                {/* Current Round */}
+                {currentRound && (
+                  <div className="text-center">
+                    <div className="bg-zinc-800 rounded-lg p-4 mb-4">
+                      <h3 className="text-lg font-bold mb-2">Black Card</h3>
+                      <p className="text-xl">{currentRound.black_cards?.text}</p>
+                      <p className="text-sm text-zinc-400 mt-2">
+                        Judge: {currentRound.profiles?.username}
+                      </p>
+                    </div>
+
+                    {/* Submissions Status */}
+                    <p className="text-zinc-400 mb-4">
+                      {submissions.length} / {players.filter(p => !p.is_judge).length} cards submitted
+                    </p>
+                  </div>
+                )}
+
+                {/* Player Hand (if not judge) */}
+                {currentRound && !players.find(p => p.profile_id === user.id)?.is_judge && (
+                  <div>
+                    <h3 className="font-bold mb-3">Your Cards</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {playerHand.map((handCard) => (
+                        <button
+                          key={handCard.id}
+                          onClick={() => handleSubmitCard(handCard.white_card_id)}
+                          disabled={submissions.some(s => s.profile_id === user.id)}
+                          className="bg-white text-black p-3 rounded-lg text-left hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {handCard.white_cards?.text}
+                        </button>
+                      ))}
+                    </div>
+                    {submissions.some(s => s.profile_id === user.id) && (
+                      <p className="text-emerald-400 text-center mt-3">
+                        ✓ Card submitted! Waiting for other players...
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Judge View */}
+                {currentRound && players.find(p => p.profile_id === user.id)?.is_judge && (
+                  <div>
+                    <h3 className="font-bold mb-3">You are the Judge</h3>
+                    <p className="text-zinc-400 mb-4">
+                      Wait for all players to submit their cards, then choose the winner.
+                    </p>
+                    {submissions.length === players.filter(p => !p.is_judge).length && (
+                      <div className="space-y-3">
+                        <h4 className="font-bold">Choose the winning card:</h4>
+                        {submissions.map((submission) => (
+                          <button
+                            key={submission.id}
+                            onClick={() => selectWinner(currentRound.id, submission.id, user.id)}
+                            className="block w-full bg-white text-black p-3 rounded-lg text-left hover:bg-gray-100 transition-colors"
+                          >
+                            {submission.white_cards?.text}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
