@@ -82,7 +82,7 @@ export default function GamePage() {
           `)
           .eq("room_id", roomId)
           .eq("status", "submitting")
-          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
           .limit(1);
         
         if (roundError) {
