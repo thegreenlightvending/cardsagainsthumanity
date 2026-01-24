@@ -411,14 +411,12 @@ export default function GamePage() {
       console.log("Current score:", currentScore);
       console.log("New score (after +1):", newScore);
 
-      // Award point to winner - use .select() to verify update
-      const { data: updatedPlayer, error: updateError } = await supabase
+      // Award point to winner
+      const { error: updateError } = await supabase
         .from("room_players")
         .update({ score: newScore })
         .eq("room_id", roomId)
-        .eq("profile_id", submission.profile_id)
-        .select("score, profiles(username)")
-        .single();
+        .eq("profile_id", submission.profile_id);
 
       if (updateError) {
         console.error("Score update error:", updateError);
@@ -426,7 +424,7 @@ export default function GamePage() {
       }
 
       console.log("Score updated successfully!");
-      console.log("Verified new score:", updatedPlayer?.score);
+      console.log("New score should be:", newScore);
       console.log("=== END SCORE UPDATE ===");
 
       // Mark round as completed - verify it actually updated
@@ -476,7 +474,7 @@ export default function GamePage() {
       setCurrentRound(null);
       setSubmissions([]);
 
-      const winnerName = updatedPlayer?.profiles?.username || winnerData.profiles?.username || "winner";
+      const winnerName = winnerData.profiles?.username || "winner";
       setError(`🏆 ${winnerName} wins! Now has ${newScore} point${newScore !== 1 ? 's' : ''}. Next round starting...`);
 
       // Automatically start next round after 2 seconds
