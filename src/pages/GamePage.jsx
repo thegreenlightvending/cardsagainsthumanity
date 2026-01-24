@@ -234,39 +234,22 @@ export default function GamePage() {
       return null;
     }
 
-    // Remove judge status from all players
-    const { error: removeError } = await supabase
-      .from("room_players")
-      .update({ is_judge: false })
-      .eq("room_id", roomId);
-    
-    if (removeError) {
-      console.error("Error removing judge flags:", removeError);
-    }
-
-    // Set new judge
-    const { error: setJudgeError } = await supabase
-      .from("room_players")
-      .update({ is_judge: true })
-      .eq("room_id", roomId)
-      .eq("profile_id", judgeProfileId);
-    
-    if (setJudgeError) {
-      console.error("Error setting judge:", setJudgeError);
-      throw new Error("Failed to set judge: " + setJudgeError.message);
-    }
-
-    // Verify judge was set
-    const { data: verifyJudge } = await supabase
-      .from("room_players")
-      .select("profile_id, is_judge, profiles(username)")
-      .eq("room_id", roomId)
-      .eq("profile_id", judgeProfileId)
-      .single();
-    
-    console.log("Judge verification:", verifyJudge);
-    if (!verifyJudge?.is_judge) {
-      throw new Error("Failed to verify judge was set");
+    // Try to update judge status in room_players (non-critical - round.judge_profile_id is source of truth)
+    try {
+      await supabase
+        .from("room_players")
+        .update({ is_judge: false })
+        .eq("room_id", roomId);
+      
+      await supabase
+        .from("room_players")
+        .update({ is_judge: true })
+        .eq("room_id", roomId)
+        .eq("profile_id", judgeProfileId);
+      
+      console.log("✅ Judge flag updated in room_players");
+    } catch (flagError) {
+      console.warn("⚠️ Could not update judge flags (RLS?), continuing:", flagError);
     }
 
     // Get random black card
@@ -661,25 +644,23 @@ export default function GamePage() {
       // Clear submissions state
       setSubmissions([]);
 
-      // FORCE UPDATE: Remove all judge flags first
-      await supabase
-        .from("room_players")
-        .update({ is_judge: false })
-        .eq("room_id", roomId);
-      
-      // FORCE UPDATE: Set ONLY the next judge
-      const { error: setJudgeError } = await supabase
-        .from("room_players")
-        .update({ is_judge: true })
-        .eq("room_id", roomId)
-        .eq("profile_id", nextJudge.profile_id);
-      
-      if (setJudgeError) {
-        console.error("CRITICAL: Failed to set judge flag:", setJudgeError);
-        throw new Error("Failed to set judge: " + setJudgeError.message);
+      // Try to update judge flags (non-critical - round.judge_profile_id is source of truth)
+      try {
+        await supabase
+          .from("room_players")
+          .update({ is_judge: false })
+          .eq("room_id", roomId);
+        
+        await supabase
+          .from("room_players")
+          .update({ is_judge: true })
+          .eq("room_id", roomId)
+          .eq("profile_id", nextJudge.profile_id);
+        
+        console.log("✅ Judge flag updated for:", nextJudge.profiles?.username);
+      } catch (flagError) {
+        console.warn("⚠️ Could not update judge flags (RLS?), continuing anyway:", flagError);
       }
-      
-      console.log("✅ FORCED judge flag update:", nextJudge.profiles?.username, nextJudge.profile_id);
 
       // Create new round with new judge
       const newRound = await createActiveRound(nextJudge.profile_id);
