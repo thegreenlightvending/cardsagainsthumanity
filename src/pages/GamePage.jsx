@@ -3,46 +3,47 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../auth/AuthProvider";
 
-/*
- * ACTIVE ROUND DEFINITION:
- * - START: When a black card is dealt (status: "submitting")
- * - END: When judge picks winning card (status: "completed")
+/**
+ * GamePage - Cards Against Humanity Game Room
  * 
- * Only one round can be active at a time per room.
- * Players submit cards during active rounds (status: "submitting").
- * Judge picks winner to end the active round.
+ * CARDS AGAINST HUMANITY RULES:
+ * - 10 cards per player at start
+ * - Judge rotates through players in join order (P1 → P2 → P3 → P1...)
+ * - Winner gets 1 point per round (infinite scoring)
+ * - Cards replenished to 10 after each round
+ * - Only one active round per room at a time
  */
-
 export default function GamePage() {
   const { roomId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  
-  // Game state
+
+  // Game State
   const [room, setRoom] = useState(null);
   const [players, setPlayers] = useState([]);
   const [currentRound, setCurrentRound] = useState(null);
-  const [hasActiveRound, setHasActiveRound] = useState(false);
   const [playerHand, setPlayerHand] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
-  
-  // UI state
+
+  // UI State
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  // Remove unused gamePhase state
 
+  // Polling for real-time updates (every 2 seconds)
   useEffect(() => {
     if (!roomId || !user) return;
     
     loadGameData();
-    
-    // Simple polling every 2 seconds
     const interval = setInterval(loadGameData, 2000);
     return () => clearInterval(interval);
   }, [roomId, user]);
 
+  /**
+   * Load all game data from database
+   * Single source of truth - always reads from DB
+   */
   async function loadGameData() {
     try {
       // Load room
@@ -54,25 +55,24 @@ export default function GamePage() {
       
       if (roomError) {
         console.error("Room load error:", roomError);
-        setError("Room not found or access denied");
+        setError("Room not found");
         setLoading(false);
         return;
       }
       
       if (roomData) setRoom(roomData);
 
-      // Load players
+      // Load players (ordered by join time - this is player_order for judge rotation)
       const { data: playersData } = await supabase
         .from("room_players")
         .select("*, profiles(username)")
         .eq("room_id", roomId)
-        .order("joined_at");
+        .order("joined_at", { ascending: true });
       
       if (playersData) setPlayers(playersData);
 
-      // If game is playing, load game data
+      // If game is playing, load active round (only one submitting round per room)
       if (roomData?.status === "playing") {
-        // Load ACTIVE round with black card text
         const { data: roundData, error: roundError } = await supabase
           .from("rounds")
           .select(`
@@ -87,34 +87,28 @@ export default function GamePage() {
         
         if (roundError) {
           console.error("Round load error:", roundError);
-        }
-        
-        // Determine which round to use (from query or current state)
-        let activeRound = null;
-        if (roundData && roundData.length > 0) {
-          activeRound = roundData[0];
-          setCurrentRound(activeRound);
-          setHasActiveRound(true);
-        } else if (currentRound && hasActiveRound) {
-          // Use existing currentRound if it exists and hasActiveRound is true
-          activeRound = currentRound;
-        } else {
-          // If room is not playing, clear everything
-          if (roomData?.status !== "playing") {
-            setCurrentRound(null);
-            setHasActiveRound(false);
-          } else {
-            // Room is playing but no round found
-            // If hasActiveRound is true, keep it (round might be loading)
-            // If hasActiveRound is false, clear currentRound
-            if (!hasActiveRound) {
-              setCurrentRound(null);
-            }
-            // If hasActiveRound is true, don't clear currentRound (it might be set by startGame)
+        } else if (roundData && roundData.length > 0) {
+          setCurrentRound(roundData[0]);
+          
+          // Load submissions for this round
+          const { data: submissionsData, error: submissionsError } = await supabase
+            .from("submissions")
+            .select("*, white_cards(text), profiles(username)")
+            .eq("round_id", roundData[0].id);
+          
+          if (submissionsError) {
+            console.error("Submissions load error:", submissionsError);
+            setSubmissions([]);
+          } else if (submissionsData) {
+            setSubmissions(submissionsData);
           }
+        } else {
+          // No active round - clear round state
+          setCurrentRound(null);
+          setSubmissions([]);
         }
-        
-        // Load player hand
+
+        // Load player's hand
         const { data: handData } = await supabase
           .from("player_hands")
           .select("*, white_cards(text)")
@@ -122,37 +116,9 @@ export default function GamePage() {
           .eq("profile_id", user.id);
         
         if (handData) setPlayerHand(handData);
-
-        // Load submissions - use activeRound if available
-        const roundIdForSubmissions = activeRound?.id || (hasActiveRound && currentRound?.id ? currentRound.id : null);
-        
-        if (roundIdForSubmissions) {
-          console.log("Loading submissions for round:", roundIdForSubmissions, "isJudge:", players.find(p => p.profile_id === user.id)?.is_judge);
-          const { data: submissionsData, error: submissionsError } = await supabase
-            .from("submissions")
-            .select("*, white_cards(text), profiles(username)")
-            .eq("round_id", roundIdForSubmissions);
-          
-          if (submissionsError) {
-            console.error("Submissions load error:", submissionsError);
-            setSubmissions([]);
-          } else {
-            console.log("Submissions loaded successfully:", {
-              count: submissionsData?.length || 0,
-              roundId: roundIdForSubmissions,
-              submissions: submissionsData,
-              isJudge: players.find(p => p.profile_id === user.id)?.is_judge
-            });
-            setSubmissions(submissionsData || []);
-          }
-        } else {
-          // No active round, clear submissions
-          console.log("No active round found, clearing submissions");
-          setSubmissions([]);
-        }
       } else {
+        // Game not playing - clear all game state
         setCurrentRound(null);
-        setHasActiveRound(false);
         setPlayerHand([]);
         setSubmissions([]);
       }
@@ -162,10 +128,10 @@ export default function GamePage() {
         .from("messages")
         .select("*, profiles(username)")
         .eq("room_id", roomId)
-        .order("created_at")
+        .order("created_at", { ascending: false })
         .limit(20);
       
-      if (messagesData) setMessages(messagesData);
+      if (messagesData) setMessages(messagesData.reverse());
 
       setLoading(false);
     } catch (err) {
@@ -175,23 +141,110 @@ export default function GamePage() {
     }
   }
 
-  // SINGLE FUNCTION TO CREATE ACTIVE ROUNDS
+  /**
+   * Start the game
+   * - Set room to "playing"
+   * - Reset all scores to 0
+   * - Deal 10 cards to each player
+   * - Create first round with first player (by join order) as judge
+   */
+  async function startGame() {
+    try {
+      if (players.length < 3) {
+        setError("Need at least 3 players to start");
+        return;
+      }
+
+      setError("Starting game...");
+
+      // 1. Set room to playing
+      await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
+
+      // 2. Reset all scores to 0
+      await supabase.from("room_players").update({ score: 0 }).eq("room_id", roomId);
+
+      // 3. Clear existing hands
+      await supabase.from("player_hands").delete().eq("room_id", roomId);
+
+      // 4. Deal 10 cards to each player
+      const { data: whiteCards } = await supabase
+        .from("white_cards")
+        .select("id")
+        .eq("deck_id", room.deck_id);
+      
+      if (!whiteCards || whiteCards.length < players.length * 10) {
+        throw new Error("Not enough cards in deck");
+      }
+      
+      const shuffled = [...whiteCards].sort(() => Math.random() - 0.5);
+      const hands = [];
+      let cardIndex = 0;
+      
+      for (const player of players) {
+        for (let i = 0; i < 10; i++) {
+          hands.push({
+            room_id: roomId,
+            profile_id: player.profile_id,
+            white_card_id: shuffled[cardIndex].id
+          });
+          cardIndex++;
+        }
+      }
+      
+      await supabase.from("player_hands").insert(hands);
+
+      // 5. Create first round with first player (by join order) as judge
+      await createActiveRound(players[0].profile_id);
+
+      // 6. Refresh game data
+      await loadGameData();
+      setError("");
+
+    } catch (err) {
+      console.error("Start game error:", err);
+      setError("Failed to start game: " + err.message);
+    }
+  }
+
+  /**
+   * Create an active round with a new judge
+   * - Checks if active round already exists (prevents duplicates)
+   * - Removes judge status from all players
+   * - Sets new judge in room_players
+   * - Gets random black card
+   * - Creates round with status "submitting"
+   * - Gracefully handles race conditions (if another client already created the round)
+   */
   async function createActiveRound(judgeProfileId) {
-    console.log("createActiveRound called with judge:", judgeProfileId);
+    console.log("=== CREATE ACTIVE ROUND ===");
+    console.log("Setting judge to:", judgeProfileId);
     
-    // STEP 1: Ensure room_players.is_judge flag matches the judge we're setting
-    // Remove judge status from all players first
-    const { error: removeJudgeError } = await supabase
+    // Guard: Check if active round already exists (prevents duplicate rounds)
+    const { data: existingActive } = await supabase
+      .from("rounds")
+      .select("id, judge_profile_id")
+      .eq("room_id", roomId)
+      .eq("status", "submitting")
+      .limit(1);
+    
+    if (existingActive && existingActive.length > 0) {
+      // Active round already exists - just refresh
+      console.log("Active round already exists, skipping creation");
+      await loadGameData();
+      return null;
+    }
+
+    // Remove judge status from all players
+    const { error: removeError } = await supabase
       .from("room_players")
       .update({ is_judge: false })
       .eq("room_id", roomId);
     
-    if (removeJudgeError) {
-      console.error("Error removing judge status:", removeJudgeError);
-      throw new Error("Failed to remove judge status: " + removeJudgeError.message);
+    if (removeError) {
+      console.error("Error removing judge flags:", removeError);
     }
-    
-    // Set the new judge in room_players
+
+    // Set new judge
     const { error: setJudgeError } = await supabase
       .from("room_players")
       .update({ is_judge: true })
@@ -199,20 +252,30 @@ export default function GamePage() {
       .eq("profile_id", judgeProfileId);
     
     if (setJudgeError) {
-      console.error("Error setting judge status:", setJudgeError);
-      throw new Error("Failed to set judge status: " + setJudgeError.message);
+      console.error("Error setting judge:", setJudgeError);
+      throw new Error("Failed to set judge: " + setJudgeError.message);
     }
+
+    // Verify judge was set
+    const { data: verifyJudge } = await supabase
+      .from("room_players")
+      .select("profile_id, is_judge, profiles(username)")
+      .eq("room_id", roomId)
+      .eq("profile_id", judgeProfileId)
+      .single();
     
-    console.log("✓ Judge status updated in room_players for:", judgeProfileId);
-    
-    // STEP 2: Get random black card
+    console.log("Judge verification:", verifyJudge);
+    if (!verifyJudge?.is_judge) {
+      throw new Error("Failed to verify judge was set");
+    }
+
+    // Get random black card
     const { data: blackCards, error: blackCardsError } = await supabase
       .from("black_cards")
       .select("id, text")
       .eq("deck_id", room.deck_id);
     
     if (blackCardsError) {
-      console.error("Error fetching black cards:", blackCardsError);
       throw new Error("Failed to fetch black cards: " + blackCardsError.message);
     }
     
@@ -221,19 +284,8 @@ export default function GamePage() {
     }
     
     const randomBlackCard = blackCards[Math.floor(Math.random() * blackCards.length)];
-    
-    console.log("Selected random black card:", {
-      id: randomBlackCard.id,
-      text: randomBlackCard.text
-    });
-    
-    // STEP 3: Create active round with new judge
-    console.log("Creating new round:", {
-      room_id: roomId,
-      black_card_id: randomBlackCard.id,
-      judge_profile_id: judgeProfileId
-    });
-    
+
+    // Create round - handle unique constraint violation gracefully (race condition)
     const { data: newRound, error } = await supabase
       .from("rounds")
       .insert({
@@ -245,286 +297,107 @@ export default function GamePage() {
       .select();
     
     if (error) {
-      console.error("Round creation error:", error);
+      // If unique constraint violation, another client already created the round
+      // Check for ANY duplicate key error (multiple ways it can be expressed)
+      const isDuplicateError = 
+        error.code === '23505' || 
+        error.code === 'PGRST116' ||
+        error.message?.includes('rounds_one_submitting_per_room') ||
+        error.message?.includes('duplicate key') ||
+        error.message?.includes('unique constraint');
+      
+      if (isDuplicateError) {
+        console.log("Round already exists (race condition) - refreshing data");
+        console.log("Error details:", error.code, error.message);
+        // Just refresh - the round already exists
+        await loadGameData();
+        return null;
+      }
+      
+      // For any other error, throw it
+      console.error("Failed to create round:", error);
       throw new Error("Failed to create round: " + error.message);
     }
     
-    if (!newRound || newRound.length === 0) {
-      throw new Error("Round was not created");
-    }
-    
-    console.log("✓ New round created successfully:", {
-      round_id: newRound[0].id,
-      judge_profile_id: judgeProfileId,
-      black_card_id: randomBlackCard.id
+    console.log("Round created successfully:", {
+      round_id: newRound[0]?.id,
+      judge_id: newRound[0]?.judge_profile_id,
+      judge_name: verifyJudge?.profiles?.username
     });
-    
-    // Set active round to true when black card is created
-    setHasActiveRound(true);
+    console.log("=== END CREATE ACTIVE ROUND ===");
     
     return newRound[0];
   }
 
-  async function startGame() {
-    try {
-      setError("Starting game...");
-
-      if (players.length < 3) {
-        throw new Error("Need at least 3 players to start");
-      }
-
-      // 1. Set room to playing
-      await supabase.from("rooms").update({ status: "playing" }).eq("id", roomId);
-
-      // 2. Reset all scores to 0 for a fresh game
-      await supabase.from("room_players").update({ score: 0 }).eq("room_id", roomId);
-      console.log("Reset all player scores to 0");
-
-      // 3. Judge will be set by createActiveRound() - no need to set it here
-      // This ensures consistency between rounds.judge_profile_id and room_players.is_judge
-
-      // 4. Deal 10 cards to each player
-      await supabase.from("player_hands").delete().eq("room_id", roomId);
-      
-      const { data: whiteCards } = await supabase.from("white_cards").select("id").eq("deck_id", room.deck_id);
-      if (!whiteCards || whiteCards.length < players.length * 10) {
-        throw new Error("Not enough cards in deck");
-      }
-      
-      const shuffled = [...whiteCards].sort(() => Math.random() - 0.5);
-      const hands = [];
-      let cardIndex = 0;
-      
-      for (let i = 0; i < players.length; i++) {
-        for (let j = 0; j < 10; j++) {
-          hands.push({
-            room_id: roomId,
-            profile_id: players[i].profile_id,
-            white_card_id: shuffled[cardIndex].id
-          });
-          cardIndex++;
-        }
-      }
-      await supabase.from("player_hands").insert(hands);
-
-      // 5. CREATE ACTIVE ROUND
-      const newRound = await createActiveRound(players[0].profile_id);
-
-      // 6. Set active round to true
-      setHasActiveRound(true);
-
-      // 7. Update room status in state
-      setRoom(prev => ({ ...prev, status: "playing" }));
-      
-      // 8. Load the round we just created with full details
-      if (newRound && newRound.id) {
-        // Get the full round with black card text
-        const { data: fullRound, error: roundLoadError } = await supabase
-          .from("rounds")
-          .select(`
-            *,
-            black_cards(text),
-            profiles!judge_profile_id(username)
-          `)
-          .eq("id", newRound.id)
-          .single();
-        
-        if (roundLoadError) {
-          console.error("Error loading round:", roundLoadError);
-        }
-        
-        if (fullRound) {
-          setCurrentRound(fullRound);
-        } else {
-          // If query fails, try to construct round from what we have
-          const { data: blackCard } = await supabase
-            .from("black_cards")
-            .select("text")
-            .eq("id", newRound.black_card_id)
-            .single();
-          
-          if (blackCard) {
-            setCurrentRound({
-              ...newRound,
-              black_cards: { text: blackCard.text },
-              profiles: { username: players[0].profiles?.username }
-            });
-          }
-        }
-      }
-
-      // 9. Refresh all game data
-      await loadGameData();
-      setError("");
-      
-    } catch (err) {
-      console.error("Start game error:", err);
-      setError("Failed to start: " + err.message);
-    }
-  }
-
-
+  /**
+   * Submit a white card
+   */
   async function submitCard(cardId) {
     try {
-      // If currentRound is null but hasActiveRound is true, try to fetch it
-      let roundToUse = currentRound;
-      
-      if (!roundToUse && hasActiveRound && room?.status === "playing") {
-        // Try to fetch the active round
-        const { data: roundData, error: roundError } = await supabase
-          .from("rounds")
-          .select(`
-            *,
-            black_cards(text),
-            profiles!judge_profile_id(username)
-          `)
-          .eq("room_id", roomId)
-          .eq("status", "submitting")
-          .order("id", { ascending: false })
-          .limit(1)
-          .single();
-        
-        if (roundError || !roundData) {
-          setError("No active round found. Please wait for the round to start.");
-          return;
-        }
-        
-        roundToUse = roundData;
-        setCurrentRound(roundData);
-      }
-
-      // Final check
-      if (!roundToUse) {
+      if (!currentRound) {
         setError("No active round");
         return;
       }
 
-      // Check if user already submitted for THIS round
-      const { data: existingSubmissions, error: checkError } = await supabase
+      // Check if already submitted
+      const { data: existing } = await supabase
         .from("submissions")
-        .select("id, white_card_id")
-        .eq("round_id", roundToUse.id)
+        .select("id")
+        .eq("round_id", currentRound.id)
         .eq("profile_id", user.id)
         .limit(1);
       
-      if (checkError) {
-        console.error("Error checking existing submission:", checkError);
-        // Don't block submission if check fails - let the insert handle duplicates
-      } else if (existingSubmissions && existingSubmissions.length > 0) {
-        console.warn("User already submitted for this round:", {
-          round_id: roundToUse.id,
-          existing_submission: existingSubmissions[0],
-          attempted_card: cardId
-        });
-        setError("You already submitted a card for this round");
+      if (existing && existing.length > 0) {
+        setError("You already submitted a card");
         return;
-      }
-      
-      // Also check if this specific card was already submitted by this user in this round
-      // (defense against double-clicks or race conditions)
-      if (existingSubmissions && existingSubmissions.length > 0) {
-        const existingCard = existingSubmissions.find(s => s.white_card_id === cardId);
-        if (existingCard) {
-          console.warn("This exact card was already submitted:", {
-            card_id: cardId,
-            submission_id: existingCard.id
-          });
-          setError("This card was already submitted");
-          return;
-        }
       }
 
       // Submit card
-      console.log("Submitting card:", {
-        round_id: roundToUse.id,
-        profile_id: user.id,
-        white_card_id: cardId
-      });
-      
-      const { data: newSubmission, error: submitError } = await supabase
+      const { error: submitError } = await supabase
         .from("submissions")
         .insert({
-          round_id: roundToUse.id,
+          round_id: currentRound.id,
           profile_id: user.id,
           white_card_id: cardId
-        })
-        .select();
+        });
 
       if (submitError) {
-        console.error("Submission insert error:", submitError);
         throw submitError;
       }
 
-      console.log("Submission created:", newSubmission);
-
       // Remove card from hand
-      const { error: removeError } = await supabase
+      await supabase
         .from("player_hands")
         .delete()
         .eq("profile_id", user.id)
         .eq("white_card_id", cardId)
         .eq("room_id", roomId);
 
-      if (removeError) {
-        console.error("Remove card error:", removeError);
-        throw removeError;
-      }
-
-      // Refresh submissions immediately so judge sees the new card
-      // IMPORTANT: Only load submissions for THIS specific round to prevent duplicates
-      const { data: submissionsData, error: submissionsError } = await supabase
-        .from("submissions")
-        .select("*, white_cards(text), profiles(username)")
-        .eq("round_id", roundToUse.id) // Only submissions for current round
-        .order("created_at", { ascending: true }); // Order by submission time
-      
-      if (submissionsError) {
-        console.error("Error refreshing submissions after submit:", submissionsError);
-      } else {
-        // Verify no duplicates (same user, same round, same card)
-        const uniqueSubmissions = submissionsData?.filter((sub, index, self) => 
-          index === self.findIndex(s => 
-            s.id === sub.id && 
-            s.profile_id === sub.profile_id && 
-            s.round_id === sub.round_id
-          )
-        ) || [];
-        
-        if (uniqueSubmissions.length !== (submissionsData?.length || 0)) {
-          console.warn("Duplicate submissions detected! Filtered:", {
-            before: submissionsData?.length || 0,
-            after: uniqueSubmissions.length
-          });
-        }
-        
-        console.log("Refreshed submissions after submit:", {
-          count: uniqueSubmissions.length,
-          round_id: roundToUse.id,
-          submissions: uniqueSubmissions.map(s => ({
-            id: s.id,
-            profile: s.profiles?.username,
-            card: s.white_cards?.text
-          }))
-        });
-        setSubmissions(uniqueSubmissions);
-      }
-
-      // Refresh player hand
+      // Refresh data
       await loadGameData();
-
       setError("Card submitted!");
-      setTimeout(() => setError(""), 2000);
+
     } catch (err) {
       console.error("Submit error:", err);
       setError("Failed to submit card: " + err.message);
     }
   }
 
+  /**
+   * Judge selects winner
+   * - Awards 1 point to winner
+   * - Marks round as completed
+   * - Automatically starts next round after 2 seconds
+   */
   async function selectWinner(submissionId) {
     try {
-      console.log("Judge selecting winner, submission ID:", submissionId);
-      
-      // Get submission details - this tells us who submitted the winning card
+      // Verify user is the judge
+      if (currentRound?.judge_profile_id !== user.id) {
+        setError("Only the judge can select a winner");
+        return;
+      }
+
+      // Get submission to find winner
       const { data: submission, error: submissionError } = await supabase
         .from("submissions")
         .select("profile_id, white_cards(text)")
@@ -532,142 +405,83 @@ export default function GamePage() {
         .single();
 
       if (submissionError || !submission) {
-        console.error("Error fetching submission:", submissionError);
-        throw new Error("Submission not found: " + (submissionError?.message || "Unknown error"));
+        throw new Error("Submission not found");
       }
 
-      console.log("Winner submission found:", {
-        profile_id: submission.profile_id,
-        card_text: submission.white_cards?.text
-      });
-
-      // STEP 1: Award point to the winner FIRST (before ending round)
-      // Don't use .single() with joins - handle as array
-      const { data: currentPlayers, error: scoreQueryError } = await supabase
+      // Get winner's current score
+      const { data: winnerData } = await supabase
         .from("room_players")
         .select("score, profiles(username)")
         .eq("room_id", roomId)
         .eq("profile_id", submission.profile_id)
         .limit(1);
       
-      if (scoreQueryError) {
-        console.error("Error fetching current score:", scoreQueryError);
-        throw new Error("Failed to fetch winner's score: " + scoreQueryError.message);
+      if (!winnerData || winnerData.length === 0) {
+        throw new Error("Winner not found");
       }
-      
-      if (!currentPlayers || currentPlayers.length === 0) {
-        throw new Error("Player not found in room");
-      }
-      
-      const currentPlayer = currentPlayers[0];
-      const currentScore = currentPlayer?.score || 0;
-      const newScore = currentScore + 1;
-      
-      console.log("Awarding point:", {
-        winner: currentPlayer?.profiles?.username || submission.profile_id,
-        currentScore,
-        newScore
-      });
-      
-      // Update score - simple approach: just update and trust it worked if no error
-      const { error: scoreUpdateError } = await supabase
+
+      const winner = winnerData[0];
+      const newScore = (winner.score || 0) + 1;
+
+      // Award point to winner
+      await supabase
         .from("room_players")
         .update({ score: newScore })
         .eq("room_id", roomId)
         .eq("profile_id", submission.profile_id);
-      
-      if (scoreUpdateError) {
-        console.error("Error updating score:", scoreUpdateError);
-        throw new Error("Failed to update winner's score: " + scoreUpdateError.message);
-      }
-      
-      // Verify by fetching just the score (no join, no .single()) to avoid RLS issues
-      // This is optional verification - we don't fail if it doesn't work
-      try {
-        const { data: verifyScore, error: verifyError } = await supabase
-          .from("room_players")
-          .select("score")
-          .eq("room_id", roomId)
-          .eq("profile_id", submission.profile_id)
-          .limit(1);
-        
-        if (verifyError) {
-          console.warn("Could not verify score update (non-critical):", verifyError);
-        } else if (verifyScore && verifyScore.length > 0 && verifyScore[0].score === newScore) {
-          console.log("✓ Point awarded successfully (verified):", {
-            winner: currentPlayer?.profiles?.username || submission.profile_id,
-            oldScore: currentScore,
-            newScore: verifyScore[0].score
-          });
-        } else if (verifyScore && verifyScore.length > 0) {
-          console.warn("Score verification mismatch:", {
-            expected: newScore,
-            actual: verifyScore[0]?.score
-          });
-        } else {
-          console.warn("Score verification returned no data (update may have still worked)");
-        }
-      } catch (verifyException) {
-        console.warn("Score verification exception (non-critical):", verifyException);
-        // Don't throw - the update might have worked even if verification fails
-      }
-      
-      // Always log success since update didn't error
-      console.log("✓ Point awarded (update completed):", {
-        winner: currentPlayer?.profiles?.username || submission.profile_id,
-        oldScore: currentScore,
-        newScore: newScore
-      });
 
-      // STEP 2: Mark round as completed
-      const { error: roundUpdateError } = await supabase.from("rounds").update({
-        winner_profile_id: submission.profile_id,
-        status: "completed"
-      }).eq("id", currentRound.id);
-      
+      // Mark round as completed - verify it actually updated
+      const { error: roundUpdateError } = await supabase
+        .from("rounds")
+        .update({
+          winner_profile_id: submission.profile_id,
+          status: "completed"
+        })
+        .eq("id", currentRound.id)
+        .eq("status", "submitting"); // Only update if still submitting (prevents double-updates)
+
       if (roundUpdateError) {
-        console.error("Error updating round:", roundUpdateError);
         throw new Error("Failed to complete round: " + roundUpdateError.message);
       }
-      
-      setHasActiveRound(false);
-      console.log("✓ Round marked as completed");
 
-      // STEP 3: Store the completed round's judge ID IMMEDIATELY (before any state changes)
-      // This ensures we always rotate from the correct judge
-      const completedRoundJudgeId = currentRound?.judge_profile_id;
-      
-      if (!completedRoundJudgeId) {
-        console.error("ERROR: currentRound has no judge_profile_id!", currentRound);
-        throw new Error("Cannot determine judge for rotation - round has no judge");
+      // Verify the round was actually marked as completed
+      const { data: verifyRound } = await supabase
+        .from("rounds")
+        .select("status")
+        .eq("id", currentRound.id)
+        .single();
+
+      if (verifyRound?.status !== "completed") {
+        throw new Error("Round was not properly marked as completed");
       }
-      
-      console.log("=== STORING JUDGE FOR ROTATION ===");
-      console.log("Completed round ID:", currentRound.id);
-      console.log("Completed round judge ID:", completedRoundJudgeId);
-      console.log("This judge will be used to calculate next judge");
-      console.log("=== END STORING ===");
 
-      // STEP 4: Refresh game data to show updated scores
-      await loadGameData();
+      // Refresh players to show updated score
+      const { data: refreshedPlayers } = await supabase
+        .from("room_players")
+        .select("*, profiles(username)")
+        .eq("room_id", roomId)
+        .order("joined_at", { ascending: true });
+      
+      if (refreshedPlayers) {
+        setPlayers(refreshedPlayers);
+      }
 
-      // STEP 5: Start next round after delay (this will rotate judge and create new black card)
-      setError(`Winner selected! +1 point awarded to ${currentPlayer?.profiles?.username || "winner"}. Next round starting...`);
-      
-      // Use a closure to ensure we capture the judge ID correctly
-      const judgeIdForNextRound = completedRoundJudgeId;
-      
+      // Clear current round state (it's now completed)
+      setCurrentRound(null);
+      setSubmissions([]);
+
+      setError(`Winner selected! +1 point to ${winner.profiles?.username || "winner"}. Starting next round...`);
+
+      // Automatically start next round after 2 seconds
+      // Give database time to process the update
       setTimeout(async () => {
         try {
-          console.log("=== SETTIMEOUT CALLBACK EXECUTING ===");
-          console.log("Judge ID to pass to nextRound:", judgeIdForNextRound);
-          // Pass the completed round's judge to nextRound for reliable rotation
-          await nextRound(judgeIdForNextRound);
+          await nextRound();
         } catch (err) {
           console.error("Error in nextRound:", err);
           setError("Failed to start next round: " + err.message);
         }
-      }, 3000);
+      }, 2000);
 
     } catch (err) {
       console.error("Select winner error:", err);
@@ -675,148 +489,121 @@ export default function GamePage() {
     }
   }
 
-  async function nextRound(completedRoundJudgeId = null) {
+  /**
+   * Start next round
+   * - Reads most recent completed round from DB (source of truth)
+   * - Rotates judge to next player in join order
+   * - Replenishes cards to 10 per player
+   * - Creates new round with new judge
+   */
+  async function nextRound() {
     try {
-      console.log("=== STARTING NEXT ROUND - ROTATING JUDGE ===");
-      console.log("Received completed round judge ID:", completedRoundJudgeId);
+      // Guard: Check if active round already exists (prevents duplicate rounds)
+      // Double-check to ensure no submitting rounds exist
+      const { data: activeRoundsNow, error: activeCheckError } = await supabase
+        .from("rounds")
+        .select("id, status")
+        .eq("room_id", roomId)
+        .eq("status", "submitting");
       
-      // STEP 1: Get the current judge
-      // Priority 1: Use the judge passed as parameter (most reliable - from the round that just ended)
-      // Priority 2: Query for most recent completed round
-      // Priority 3: Fallback to any round
-      let currentJudgeProfileId = completedRoundJudgeId;
-      
-      if (!currentJudgeProfileId) {
-        console.log("No judge ID provided, querying database...");
-        
-        // Query for the most recent COMPLETED round (the one that just ended)
-        const { data: completedRounds, error: roundError } = await supabase
-          .from("rounds")
-          .select("judge_profile_id, id, status")
-          .eq("room_id", roomId)
-          .eq("status", "completed")
-          .order("id", { ascending: false })
-          .limit(1);
-        
-        if (roundError) {
-          console.warn("Could not fetch completed round:", roundError);
-        } else if (completedRounds && completedRounds.length > 0) {
-          currentJudgeProfileId = completedRounds[0].judge_profile_id;
-          console.log("Current judge from most recent COMPLETED round:", {
-            judge_profile_id: currentJudgeProfileId,
-            round_id: completedRounds[0].id,
-            status: completedRounds[0].status
-          });
-        } else {
-          // If no completed rounds found, try to get from any round (fallback for first round)
-          console.warn("No completed rounds found, trying most recent round...");
-          const { data: recentRounds } = await supabase
-            .from("rounds")
-            .select("judge_profile_id, id, status")
-            .eq("room_id", roomId)
-            .order("id", { ascending: false })
-            .limit(1);
-          
-          if (recentRounds && recentRounds.length > 0) {
-            currentJudgeProfileId = recentRounds[0].judge_profile_id;
-            console.log("Using most recent round (any status):", {
-              judge_profile_id: currentJudgeProfileId,
-              round_id: recentRounds[0].id,
-              status: recentRounds[0].status
-            });
-          } else {
-            console.warn("No rounds found in database at all");
-          }
-        }
-      } else {
-        console.log("Using provided judge ID from completed round:", currentJudgeProfileId);
+      if (activeCheckError) {
+        console.error("Error checking active rounds:", activeCheckError);
       }
       
-      // STEP 2: Get all players in the room, ordered by when they joined (consistent order)
-      // This order acts as the "player_order" - players are numbered 0, 1, 2, etc. by join time
-      const { data: allPlayers, error: playersError } = await supabase
+      if (activeRoundsNow && activeRoundsNow.length > 0) {
+        // Active round already exists - just refresh
+        console.log("Active round already exists, refreshing data");
+        await loadGameData();
+        return;
+      }
+
+      // Source of truth: Get most recent COMPLETED round from DB
+      // CRITICAL: Get ALL completed rounds to see the full history
+      const { data: allCompletedRounds, error: lastCompletedRoundError } = await supabase
+        .from("rounds")
+        .select("judge_profile_id, id, status")
+        .eq("room_id", roomId)
+        .eq("status", "completed")
+        .order("id", { ascending: false })
+        .limit(5); // Get last 5 completed rounds for debugging
+
+      if (lastCompletedRoundError) {
+        throw new Error("Failed to read last completed round: " + lastCompletedRoundError.message);
+      }
+
+      console.log("=== JUDGE ROTATION DEBUG ===");
+      console.log("All completed rounds:", allCompletedRounds?.map(r => ({
+        id: r.id,
+        judge: r.judge_profile_id,
+        status: r.status
+      })));
+
+      const completedRoundJudgeId = allCompletedRounds?.[0]?.judge_profile_id;
+
+      if (!completedRoundJudgeId) {
+        throw new Error("Could not determine previous judge for rotation.");
+      }
+
+      console.log("Using most recent completed round judge ID:", completedRoundJudgeId);
+
+      // Get all players in join order (this is player_order for judge rotation)
+      const { data: allPlayers } = await supabase
         .from("room_players")
         .select("*, profiles(username)")
         .eq("room_id", roomId)
         .order("joined_at", { ascending: true });
       
-      if (playersError) {
-        throw new Error("Failed to load players: " + playersError.message);
-      }
-      
       if (!allPlayers || allPlayers.length === 0) {
-        throw new Error("No players found in room");
+        throw new Error("No players found");
       }
-      
-      // Log players with their order/index (this is their "player_order")
-      console.log("All players (ordered by join time - this is their player_order):", allPlayers.map((p, i) => ({
-        player_order: i,  // This is the rotation order
+
+      console.log("All players (in join order):", allPlayers.map((p, i) => ({
+        index: i,
         name: p.profiles?.username,
         id: p.profile_id,
-        is_judge: p.is_judge,
-        is_current_round_judge: p.profile_id === currentJudgeProfileId
+        joined_at: p.joined_at
       })));
-      
-      // STEP 3: Find current judge index using the round's judge_profile_id (most reliable)
-      let currentJudgeIndex = -1;
-      
-      if (currentJudgeProfileId) {
-        currentJudgeIndex = allPlayers.findIndex(p => p.profile_id === currentJudgeProfileId);
-        if (currentJudgeIndex !== -1) {
-          console.log("Found current judge by round judge_profile_id at player_order:", currentJudgeIndex);
-        }
-      }
-      
-      // Fallback: find by is_judge flag
+
+      // Find current judge's index in the ordered list
+      const currentJudgeIndex = allPlayers.findIndex(
+        p => p.profile_id === completedRoundJudgeId
+      );
+
+      console.log("Current judge index:", currentJudgeIndex);
+      console.log("Current judge:", allPlayers[currentJudgeIndex]?.profiles?.username);
+      console.log("Total players:", allPlayers.length);
+
       if (currentJudgeIndex === -1) {
-        currentJudgeIndex = allPlayers.findIndex(p => p.is_judge);
-        if (currentJudgeIndex !== -1) {
-          console.warn("Found judge by is_judge flag at player_order:", currentJudgeIndex);
-        }
+        throw new Error("Current judge not found in players list");
       }
-      
-      if (currentJudgeIndex === -1) {
-        // No judge found - set first player as judge
-        console.log("No judge found, setting first player (player_order 0) as judge");
-        await createActiveRound(allPlayers[0].profile_id);
-        await loadGameData();
-        return;
-      }
-      
-      const currentJudge = allPlayers[currentJudgeIndex];
-      console.log("Current judge:", {
-        player_order: currentJudgeIndex,
-        name: currentJudge.profiles?.username,
-        id: currentJudge.profile_id
-      });
-      
-      // STEP 4: Calculate next judge using player_order rotation
-      // Simple rotation: (current_order + 1) % total_players
+
+      // Calculate next judge (rotate through players, loop back to first)
       const nextJudgeIndex = (currentJudgeIndex + 1) % allPlayers.length;
       const nextJudge = allPlayers[nextJudgeIndex];
-      
-      // Safety check: ensure we're rotating to a different player
-      if (nextJudge.profile_id === currentJudge.profile_id) {
-        console.error("ERROR: Next judge is same as current! This should never happen.");
-        throw new Error("Judge rotation error - next judge is same as current");
-      }
-      
-      console.log("=== JUDGE ROTATION CALCULATION ===");
-      console.log("Next judge (by player_order rotation):", {
-        current_player_order: currentJudgeIndex,
-        current_judge_name: currentJudge.profiles?.username,
-        current_judge_id: currentJudge.profile_id,
-        next_player_order: nextJudgeIndex,
-        next_judge_name: nextJudge.profiles?.username,
-        next_judge_id: nextJudge.profile_id,
-        total_players: allPlayers.length,
-        rotation_formula: `(${currentJudgeIndex} + 1) % ${allPlayers.length} = ${nextJudgeIndex}`,
-        rotation: `Player ${currentJudgeIndex} → Player ${nextJudgeIndex} (${((nextJudgeIndex - currentJudgeIndex + allPlayers.length) % allPlayers.length)} positions forward)`
-      });
+
+      console.log("=== ROTATION CALCULATION ===");
+      console.log("Current judge index:", currentJudgeIndex, "(" + allPlayers[currentJudgeIndex]?.profiles?.username + ")");
+      console.log("Total players:", allPlayers.length);
+      console.log("Calculation:", `${currentJudgeIndex} + 1 = ${currentJudgeIndex + 1}`);
+      console.log("Modulo:", `${currentJudgeIndex + 1} % ${allPlayers.length} = ${nextJudgeIndex}`);
+      console.log("Next judge index:", nextJudgeIndex);
+      console.log("Next judge name:", nextJudge.profiles?.username);
+      console.log("Next judge ID:", nextJudge.profile_id);
+      console.log("Current judge ID:", completedRoundJudgeId);
+      console.log("Are they different?", nextJudge.profile_id !== completedRoundJudgeId);
       console.log("=== END ROTATION CALCULATION ===");
-      
-      // STEP 4: Replenish cards to 10 per player
-      console.log("Replenishing cards...");
+
+      // CRITICAL: Verify the next judge is actually different
+      if (nextJudge.profile_id === completedRoundJudgeId) {
+        console.error("❌ ROTATION FAILED: Next judge is same as current judge!");
+        console.error("Current:", completedRoundJudgeId, allPlayers[currentJudgeIndex]?.profiles?.username);
+        console.error("Next:", nextJudge.profile_id, nextJudge.profiles?.username);
+        throw new Error(`Judge rotation failed: Next judge is same as current judge! Current: ${completedRoundJudgeId}, Next: ${nextJudge.profile_id}`);
+      }
+
+      console.log("✅ Rotation verified: Judge will change from", allPlayers[currentJudgeIndex]?.profiles?.username, "→", nextJudge.profiles?.username);
+
+      // Replenish cards to 10 per player
       for (const player of allPlayers) {
         const { data: currentCards } = await supabase
           .from("player_hands")
@@ -827,125 +614,166 @@ export default function GamePage() {
         const cardsNeeded = 10 - (currentCards?.length || 0);
         
         if (cardsNeeded > 0) {
-          // Get all available white cards from the deck
           const { data: allDeckCards } = await supabase
             .from("white_cards")
             .select("id")
             .eq("deck_id", room.deck_id);
           
           if (allDeckCards && allDeckCards.length > 0) {
-            // Get IDs of cards already in player's hand
             const cardsInHand = new Set((currentCards || []).map(c => c.white_card_id));
-            
-            // Filter out cards already in hand
             const availableCards = allDeckCards.filter(card => !cardsInHand.has(card.id));
-            
-            // Shuffle and take needed amount
             const shuffled = [...availableCards].sort(() => Math.random() - 0.5);
             const cardsToAdd = shuffled.slice(0, Math.min(cardsNeeded, shuffled.length));
             
             if (cardsToAdd.length > 0) {
-              const newCards = cardsToAdd.map(card => ({
+              // Insert cards, ignoring duplicates (prevents 409 errors)
+              const cardsToInsert = cardsToAdd.map(card => ({
                 room_id: roomId,
                 profile_id: player.profile_id,
                 white_card_id: card.id
               }));
-              await supabase.from("player_hands").insert(newCards);
-              console.log(`Added ${cardsToAdd.length} cards to ${player.profiles?.username}`);
-            } else {
-              console.warn(`No available cards for ${player.profiles?.username}`);
+              
+              // Insert one at a time to handle duplicates gracefully
+              for (const cardData of cardsToInsert) {
+                const { error: insertError } = await supabase
+                  .from("player_hands")
+                  .insert(cardData);
+                
+                // Ignore duplicate key errors (card already in hand)
+                if (insertError && insertError.code !== '23505' && insertError.code !== 'PGRST116') {
+                  console.error("Error adding card to hand:", insertError);
+                }
+              }
             }
           }
         }
       }
-      console.log("✓ Cards replenished");
 
-      // STEP 5: Clear old submissions from previous round (to prevent duplicates)
-      // This ensures only submissions for the new round are shown
-      console.log("Clearing submissions state for new round");
+      // Clear submissions state
       setSubmissions([]);
-      
-      // STEP 6: Create new round with new judge (this creates new black card and sets judge)
-      console.log("Creating new round with new judge:", nextJudge.profiles?.username);
-      const newRound = await createActiveRound(nextJudge.profile_id);
-      
-      if (!newRound) {
-        throw new Error("Failed to create new round");
-      }
-      
-      console.log("✓ New round created - Judge:", nextJudge.profiles?.username);
-      
-      // STEP 7: Load full round details and update state
-      const { data: fullRound, error: roundLoadError } = await supabase
-        .from("rounds")
-        .select(`
-          *,
-          black_cards(text),
-          profiles!judge_profile_id(username)
-        `)
-        .eq("id", newRound.id)
-        .single();
-      
-      if (roundLoadError) {
-        console.error("Error loading full round:", roundLoadError);
-      } else if (fullRound) {
-        setCurrentRound(fullRound);
-      }
-      
-      setHasActiveRound(true);
 
-      // STEP 8: Refresh all game data (this will load submissions for the NEW round only)
-      await loadGameData();
-      
-      // STEP 8: Verify the new judge was set correctly
-      const { data: verifyPlayers } = await supabase
+      // FORCE UPDATE: Remove all judge flags first
+      await supabase
         .from("room_players")
-        .select("profile_id, is_judge, profiles(username)")
+        .update({ is_judge: false })
+        .eq("room_id", roomId);
+      
+      // FORCE UPDATE: Set ONLY the next judge
+      const { error: setJudgeError } = await supabase
+        .from("room_players")
+        .update({ is_judge: true })
+        .eq("room_id", roomId)
+        .eq("profile_id", nextJudge.profile_id);
+      
+      if (setJudgeError) {
+        console.error("CRITICAL: Failed to set judge flag:", setJudgeError);
+        throw new Error("Failed to set judge: " + setJudgeError.message);
+      }
+      
+      console.log("✅ FORCED judge flag update:", nextJudge.profiles?.username, nextJudge.profile_id);
+
+      // Create new round with new judge
+      const newRound = await createActiveRound(nextJudge.profile_id);
+
+      // If newRound is null, it means another client already created it (race condition)
+      // Just refresh data - loadGameData will pick up the existing round
+      if (!newRound) {
+        await loadGameData();
+        return;
+      }
+
+      // CRITICAL: FORCE the judge in the round record
+      if (newRound.judge_profile_id !== nextJudge.profile_id) {
+        console.error("❌ JUDGE MISMATCH! Round has wrong judge, FORCING update...");
+        const { error: forceError } = await supabase
+          .from("rounds")
+          .update({ judge_profile_id: nextJudge.profile_id })
+          .eq("id", newRound.id);
+        
+        if (forceError) {
+          console.error("CRITICAL: Failed to force judge update:", forceError);
+          throw new Error("Failed to update judge in round: " + forceError.message);
+        }
+        
+        newRound.judge_profile_id = nextJudge.profile_id;
+        console.log("✅ FORCED judge update in round record");
+      }
+
+      console.log("=== FINAL VERIFICATION ===");
+      console.log("Round ID:", newRound.id);
+      console.log("Expected judge:", nextJudge.profile_id, nextJudge.profiles?.username);
+      console.log("Round judge_profile_id:", newRound.judge_profile_id);
+      console.log("Match:", newRound.judge_profile_id === nextJudge.profile_id);
+      console.log("=== END VERIFICATION ===");
+
+      // Get black card text
+      const { data: blackCard } = await supabase
+        .from("black_cards")
+        .select("text")
+        .eq("id", newRound.black_card_id)
+        .single();
+
+      // FORCE set the current round state with correct judge
+      const forcedRound = {
+        ...newRound,
+        black_cards: { text: blackCard?.text || "Loading..." },
+        profiles: { username: nextJudge.profiles?.username }
+      };
+      
+      setCurrentRound(forcedRound);
+      console.log("✅ FORCED currentRound state with judge:", nextJudge.profiles?.username);
+
+      // FORCE update players list with correct judge flag
+      const { data: refreshedPlayers } = await supabase
+        .from("room_players")
+        .select("*, profiles(username)")
         .eq("room_id", roomId)
         .order("joined_at", { ascending: true });
       
-      if (verifyPlayers) {
-        const actualJudge = verifyPlayers.find(p => p.is_judge);
-        console.log("=== JUDGE VERIFICATION ===");
-        console.log({
-          expected_judge: nextJudge.profiles?.username,
-          expected_id: nextJudge.profile_id,
-          actual_judge: actualJudge?.profiles?.username,
-          actual_id: actualJudge?.profile_id,
-          match: actualJudge?.profile_id === nextJudge.profile_id
-        });
-        console.log("=== END VERIFICATION ===");
+      if (refreshedPlayers) {
+        // Ensure only the correct player has is_judge = true
+        const updatedPlayers = refreshedPlayers.map(p => ({
+          ...p,
+          is_judge: p.profile_id === nextJudge.profile_id
+        }));
+        setPlayers(updatedPlayers);
+        console.log("✅ FORCED players list update");
       }
-      
-      console.log("=== NEXT ROUND COMPLETE ===");
+
+      // Clear submissions for new round
+      setSubmissions([]);
+
       setError(`New round! ${nextJudge.profiles?.username} is now the judge.`);
-      setTimeout(() => setError(""), 3000);
-      
+      setTimeout(() => setError(""), 4000);
+
     } catch (err) {
       console.error("Next round error:", err);
       setError("Failed to start next round: " + err.message);
     }
   }
 
+  /**
+   * Send chat message
+   */
   async function sendMessage(e) {
     e.preventDefault();
     if (!newMessage.trim()) return;
 
     try {
-      await supabase
-        .from("messages")
-        .insert({
-          room_id: roomId,
-          profile_id: user.id,
-          content: newMessage.trim()
-        });
+      await supabase.from("messages").insert({
+        room_id: roomId,
+        profile_id: user.id,
+        content: newMessage.trim()
+      });
 
       setNewMessage("");
+      await loadGameData();
     } catch (err) {
       console.error("Message error:", err);
     }
   }
 
+  // Loading state
   if (loading) {
     return (
       <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">
@@ -954,6 +782,7 @@ export default function GamePage() {
     );
   }
 
+  // Room not found
   if (!room) {
     return (
       <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">
@@ -970,9 +799,13 @@ export default function GamePage() {
     );
   }
 
+  // Calculate derived state
   const isHost = room.party_leader === user.id;
-  const isJudge = players.find(p => p.profile_id === user.id)?.is_judge;
+  const isJudge = currentRound?.judge_profile_id === user.id;
   const hasSubmitted = submissions.some(s => s.profile_id === user.id);
+  const nonJudgeCount = players.filter(p => 
+    currentRound ? currentRound.judge_profile_id !== p.profile_id : !p.is_judge
+  ).length;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -1003,20 +836,48 @@ export default function GamePage() {
       </div>
 
       <div className="max-w-6xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-4 gap-4">
-        {/* Players */}
+        {/* Players List */}
         <div className="lg:col-span-1">
           <div className="bg-zinc-900 rounded-lg p-4">
-            <h2 className="font-bold mb-3">Players ({players.length})</h2>
-            {players.map((player) => (
-              <div key={player.profile_id} className="flex justify-between items-center mb-2 p-2 bg-zinc-800 rounded">
-                <div>
-                  <span className="text-sm">{player.profiles?.username || "Unknown"}</span>
-                  {player.is_judge && <span className="ml-2 text-xs bg-purple-600 px-1 rounded">JUDGE</span>}
-                  {player.profile_id === room.party_leader && <span className="ml-2 text-xs bg-yellow-600 px-1 rounded">HOST</span>}
-                </div>
-                <span className="text-xs text-zinc-400">{player.score} pts</span>
-              </div>
-            ))}
+            <h2 className="font-bold mb-3 text-lg">Players ({players.length})</h2>
+            <div className="space-y-2">
+              {players.map((player) => {
+                const isPlayerJudge = currentRound?.judge_profile_id === player.profile_id;
+                const isPlayerHost = player.profile_id === room.party_leader;
+                
+                return (
+                  <div
+                    key={`${player.profile_id}-${isPlayerJudge}-${player.score}`}
+                    className={`p-3 rounded-lg border transition-all ${
+                      isPlayerJudge
+                        ? "bg-purple-900/30 border-purple-600 shadow-lg shadow-purple-500/20"
+                        : "bg-zinc-800 border-zinc-700"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-white">
+                          {player.profiles?.username || "Unknown"}
+                        </span>
+                        {isPlayerJudge && (
+                          <span className="text-xs bg-purple-600 text-white px-2 py-0.5 rounded font-bold animate-pulse">
+                            ⚖️ JUDGE
+                          </span>
+                        )}
+                        {isPlayerHost && (
+                          <span className="text-xs bg-yellow-600 text-white px-2 py-0.5 rounded">
+                            👑 HOST
+                          </span>
+                        )}
+                      </div>
+                      <span className={`text-sm font-semibold ${isPlayerJudge ? "text-purple-300" : "text-zinc-300"}`}>
+                        {player.score || 0} pts
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -1024,7 +885,6 @@ export default function GamePage() {
         <div className="lg:col-span-2">
           <div className="bg-zinc-900 rounded-lg p-6">
             {room.status === "waiting" ? (
-              /* WAITING FOR GAME TO START */
               <div className="text-center py-12">
                 <h2 className="text-2xl font-bold mb-4">Waiting for Game</h2>
                 <p className="text-zinc-400 mb-6">Need at least 3 players to start</p>
@@ -1043,40 +903,31 @@ export default function GamePage() {
                 )}
               </div>
             ) : (
-              /* GAME IS PLAYING - ALWAYS SHOW BLACK CARD AREA */
               <div className="space-y-6">
-                {/* BLACK CARD - SIMPLE AND DIRECT */}
+                {/* Black Card */}
                 <div className="text-center">
                   <div className="bg-black rounded-lg p-8 mb-4 border-2 border-white">
                     <h3 className="text-2xl font-bold mb-4 text-white">Black Card</h3>
                     <p className="text-2xl text-white mb-4">
-                      {currentRound?.black_cards?.text || "I drink to forget _____."}
+                      {currentRound?.black_cards?.text || "Loading..."}
                     </p>
-                    <p className="text-lg text-purple-300">
-                      Judge: {currentRound?.profiles?.username || players.find(p => p.is_judge)?.profiles?.username || "Judge"}
+                    <p className="text-lg text-purple-300 font-semibold">
+                      ⚖️ Judge: {currentRound?.profiles?.username || "Judge"}
                     </p>
                   </div>
                   
-                  {/* GAME STATUS - SIMPLE */}
+                  {/* Game Status */}
                   <div className="bg-zinc-800 rounded-lg p-4">
-                    <div className="text-center">
-                      <p className="text-lg text-zinc-300">
-                        Cards Submitted: {submissions.length} / {players.filter(p => !p.is_judge).length}
-                      </p>
-                      {submissions.length === players.filter(p => !p.is_judge).length && (
-                        <p className="text-yellow-400 mt-2">Judge is choosing winner!</p>
-                      )}
-                      {/* DEBUG: Show active round status */}
-                      <div className="mt-3 text-xs text-zinc-500">
-                        DEBUG: hasActiveRound={hasActiveRound ? "true" : "false"} | 
-                        currentRound={currentRound ? "exists" : "null"} | 
-                        roomStatus={room?.status}
-                      </div>
-                    </div>
+                    <p className="text-lg text-zinc-300">
+                      Cards Submitted: {submissions.length} / {nonJudgeCount}
+                    </p>
+                    {submissions.length === nonJudgeCount && nonJudgeCount > 0 && (
+                      <p className="text-yellow-400 mt-2">Judge is choosing winner!</p>
+                    )}
                   </div>
                 </div>
 
-                {/* YOUR CARDS */}
+                {/* Player's Hand */}
                 <div className="bg-zinc-800 rounded-lg p-4">
                   {playerHand.length > 0 ? (
                     <>
@@ -1091,8 +942,8 @@ export default function GamePage() {
                             onClick={() => !isJudge && submitCard(card.white_card_id)}
                             disabled={isJudge || hasSubmitted}
                             className={`p-4 rounded-lg text-sm font-medium transition-all ${
-                              isJudge 
-                                ? "bg-gray-600 text-gray-300 cursor-not-allowed" 
+                              isJudge
+                                ? "bg-gray-600 text-gray-300 cursor-not-allowed"
                                 : hasSubmitted
                                 ? "bg-green-200 text-green-800 cursor-not-allowed"
                                 : "bg-white text-black hover:bg-yellow-100 hover:scale-105 shadow-lg"
@@ -1103,74 +954,48 @@ export default function GamePage() {
                         ))}
                       </div>
                       {hasSubmitted && !isJudge && (
-                        <p className="text-green-400 text-center mt-4 text-lg font-bold">✓ Card Submitted!</p>
+                        <p className="text-green-400 text-center mt-4 text-lg font-bold">
+                          ✓ Card Submitted!
+                        </p>
                       )}
                       {isJudge && (
-                        <p className="text-purple-400 text-center mt-4 text-lg">You are judging this round - wait for submissions</p>
+                        <p className="text-purple-400 text-center mt-4 text-lg">
+                          You are judging this round - wait for submissions
+                        </p>
                       )}
                     </>
                   ) : (
                     <div className="text-center py-8">
                       <p className="text-zinc-400 text-lg">No cards in hand</p>
-                      <button 
-                        onClick={loadGameData}
-                        className="mt-3 px-4 py-2 bg-blue-600 rounded hover:bg-blue-500"
-                      >
-                        Refresh Cards
-                      </button>
                     </div>
                   )}
                 </div>
 
-                {/* Submissions Area - Judge View */}
-                {isJudge && hasActiveRound && (
+                {/* Judge's Submission View */}
+                {isJudge && currentRound && (
                   <div className="bg-purple-900/30 border-2 border-purple-600 rounded-lg p-6">
                     <div className="text-center mb-4">
                       <h3 className="text-2xl font-bold text-purple-200 mb-2">
                         ⚖️ Judge's Choice
                       </h3>
                       <p className="text-purple-300">
-                        Submitted Cards: <span className="font-bold text-white">{submissions.length} / {players.filter(p => !p.is_judge).length}</span>
+                        Submitted Cards: <span className="font-bold text-white">{submissions.length} / {nonJudgeCount}</span>
                       </p>
-                      {currentRound && (
-                        <p className="text-xs text-purple-400 mt-1">
-                          Round ID: {currentRound.id}
-                        </p>
-                      )}
-                      {/* Debug info */}
-                      <div className="mt-2 text-xs text-purple-500 bg-purple-950/50 p-2 rounded">
-                        <div>Debug: isJudge={String(isJudge)}, hasActiveRound={String(hasActiveRound)}</div>
-                        <div>Submissions count: {submissions.length}</div>
-                        <div>Round ID: {currentRound?.id || "none"}</div>
-                        <div>Players (non-judge): {players.filter(p => !p.is_judge).length}</div>
-                        {submissions.length === 0 && currentRound && (
-                          <div className="mt-1 text-yellow-400">
-                            ⚠️ No submissions found. Check console for RLS errors.
-                          </div>
-                        )}
-                        {submissions.length > 0 && (
-                          <div className="mt-1">
-                            Submission IDs: {submissions.map(s => s.id).join(", ")}
-                          </div>
-                        )}
-                      </div>
                     </div>
                     {submissions.length === 0 ? (
                       <div className="text-center py-8">
                         <p className="text-purple-300 text-lg">Waiting for players to submit cards...</p>
-                        <p className="text-purple-400 text-sm mt-2">Cards will appear here as players submit them</p>
                       </div>
                     ) : (
                       <div>
-                        {submissions.length < players.filter(p => !p.is_judge).length && (
+                        {submissions.length < nonJudgeCount && (
                           <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-3 mb-4 text-center">
                             <p className="text-yellow-300 font-semibold">
-                              ⏳ {players.filter(p => !p.is_judge).length - submissions.length} more card(s) coming...
+                              ⏳ {nonJudgeCount - submissions.length} more card(s) coming...
                             </p>
-                            <p className="text-yellow-400 text-sm mt-1">You can preview cards as they arrive</p>
                           </div>
                         )}
-                        {submissions.length === players.filter(p => !p.is_judge).length && (
+                        {submissions.length === nonJudgeCount && (
                           <div className="bg-green-900/30 border-2 border-green-500 rounded-lg p-4 mb-4 text-center">
                             <p className="text-green-300 font-bold text-xl">✓ All cards submitted!</p>
                             <p className="text-green-200 text-lg mt-1">Click on your favorite card to choose the winner:</p>
@@ -1187,9 +1012,7 @@ export default function GamePage() {
                                 <div className="font-bold text-sm text-purple-600 bg-purple-100 px-2 py-1 rounded">
                                   Card #{index + 1}
                                 </div>
-                                <div className="text-xs text-zinc-500">
-                                  Click to select winner
-                                </div>
+                                <div className="text-xs text-zinc-500">Click to select winner</div>
                               </div>
                               <div className="text-lg font-medium">{submission.white_cards?.text}</div>
                               {submission.profiles && (
@@ -1240,8 +1063,9 @@ export default function GamePage() {
         </div>
       </div>
 
+      {/* Error Message */}
       {error && (
-        <div className="fixed bottom-4 right-4 bg-red-900 border border-red-700 rounded-lg px-4 py-2 text-red-200">
+        <div className="fixed bottom-4 right-4 bg-red-900 border border-red-700 rounded-lg px-4 py-2 text-red-200 max-w-md">
           {error}
         </div>
       )}
