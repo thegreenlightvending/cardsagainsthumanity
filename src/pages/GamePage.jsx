@@ -391,26 +391,43 @@ export default function GamePage() {
       }
 
       // Get winner's current score
-      const { data: winnerData } = await supabase
+      const { data: winnerData, error: winnerError } = await supabase
         .from("room_players")
         .select("score, profiles(username)")
         .eq("room_id", roomId)
         .eq("profile_id", submission.profile_id)
-        .limit(1);
+        .single();
       
-      if (!winnerData || winnerData.length === 0) {
+      if (winnerError || !winnerData) {
+        console.error("Winner lookup error:", winnerError);
         throw new Error("Winner not found");
       }
 
-      const winner = winnerData[0];
-      const newScore = (winner.score || 0) + 1;
+      const currentScore = winnerData.score || 0;
+      const newScore = currentScore + 1;
 
-      // Award point to winner
-      await supabase
+      console.log("=== SCORE UPDATE ===");
+      console.log("Winner:", winnerData.profiles?.username);
+      console.log("Current score:", currentScore);
+      console.log("New score (after +1):", newScore);
+
+      // Award point to winner - use .select() to verify update
+      const { data: updatedPlayer, error: updateError } = await supabase
         .from("room_players")
         .update({ score: newScore })
         .eq("room_id", roomId)
-        .eq("profile_id", submission.profile_id);
+        .eq("profile_id", submission.profile_id)
+        .select("score, profiles(username)")
+        .single();
+
+      if (updateError) {
+        console.error("Score update error:", updateError);
+        throw new Error("Failed to update score: " + updateError.message);
+      }
+
+      console.log("Score updated successfully!");
+      console.log("Verified new score:", updatedPlayer?.score);
+      console.log("=== END SCORE UPDATE ===");
 
       // Mark round as completed - verify it actually updated
       const { error: roundUpdateError } = await supabase
@@ -446,13 +463,21 @@ export default function GamePage() {
       
       if (refreshedPlayers) {
         setPlayers(refreshedPlayers);
+        
+        // Log all scores for debugging
+        console.log("=== ALL PLAYER SCORES ===");
+        refreshedPlayers.forEach(p => {
+          console.log(`${p.profiles?.username}: ${p.score} points`);
+        });
+        console.log("=== END SCORES ===");
       }
 
       // Clear current round state (it's now completed)
       setCurrentRound(null);
       setSubmissions([]);
 
-      setError(`Winner selected! +1 point to ${winner.profiles?.username || "winner"}. Starting next round...`);
+      const winnerName = updatedPlayer?.profiles?.username || winnerData.profiles?.username || "winner";
+      setError(`🏆 ${winnerName} wins! Now has ${newScore} point${newScore !== 1 ? 's' : ''}. Next round starting...`);
 
       // Automatically start next round after 2 seconds
       // Give database time to process the update
