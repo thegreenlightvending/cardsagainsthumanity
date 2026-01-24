@@ -506,7 +506,7 @@ INSERT INTO public.white_cards (deck_id, text) VALUES
 ((SELECT id FROM decks WHERE name = 'Cards Against Humanity - Clean'), 'Taking a mental health day'),
 ((SELECT id FROM decks WHERE name = 'Cards Against Humanity - Clean'), 'Talking to yourself'),
 ((SELECT id FROM decks WHERE name = 'Cards Against Humanity - Clean'), 'That one song stuck in your head'),
-((SELECT id FROM decks WHERE name = 'Cards Against Humanity - Clean'), 'The '90s'),
+((SELECT id FROM decks WHERE name = 'Cards Against Humanity - Clean'), 'The ''90s'),
 ((SELECT id FROM decks WHERE name = 'Cards Against Humanity - Clean'), 'The comfort zone'),
 ((SELECT id FROM decks WHERE name = 'Cards Against Humanity - Clean'), 'The dentist'),
 ((SELECT id FROM decks WHERE name = 'Cards Against Humanity - Clean'), 'The floor is lava'),
