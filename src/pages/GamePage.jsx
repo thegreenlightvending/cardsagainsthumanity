@@ -511,9 +511,18 @@ export default function GamePage() {
       }
       
       if (activeRoundsNow && activeRoundsNow.length > 0) {
-        // Active round already exists - just refresh
-        console.log("Active round already exists, refreshing data");
-        await loadGameData();
+        // Active round already exists - load it and set state
+        console.log("Active round already exists, loading it:", activeRoundsNow[0].id);
+        const { data: existingRound } = await supabase
+          .from("rounds")
+          .select(`*, black_cards(text), profiles!judge_profile_id(username)`)
+          .eq("id", activeRoundsNow[0].id)
+          .single();
+        
+        if (existingRound) {
+          console.log("Setting existing round, judge:", existingRound.profiles?.username);
+          setCurrentRound(existingRound);
+        }
         return;
       }
 
