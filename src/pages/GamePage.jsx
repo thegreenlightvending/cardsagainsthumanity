@@ -513,6 +513,69 @@ export default function GamePage() {
         console.log("=== END SCORES ===");
       }
 
+      // ========================================
+      // CARD REPLENISHMENT - Only runs here, on judge's browser, once per round
+      // ========================================
+      console.log("=== CARD REPLENISHMENT (judge browser only) ===");
+      
+      // Get the current judge ID (the one who just finished judging)
+      const currentJudgeId = currentRound.judge_profile_id;
+      
+      // Replenish cards for players who submitted (everyone except the current judge)
+      for (const player of refreshedPlayers) {
+        // Skip the CURRENT judge - they didn't submit a card
+        if (player.profile_id === currentJudgeId) {
+          console.log(`Skipping ${player.profiles?.username} (judge, didn't submit)`);
+          continue;
+        }
+        
+        // Count current cards
+        const { data: currentCards } = await supabase
+          .from("player_hands")
+          .select("id, white_card_id")
+          .eq("room_id", roomId)
+          .eq("profile_id", player.profile_id);
+        
+        const currentCount = currentCards?.length || 0;
+        console.log(`${player.profiles?.username}: has ${currentCount} cards`);
+        
+        // Only add ONE card if they have less than 10
+        if (currentCount < 10) {
+          // Get a random card not in their hand
+          const { data: allDeckCards } = await supabase
+            .from("white_cards")
+            .select("id")
+            .eq("deck_id", room.deck_id);
+          
+          if (allDeckCards && allDeckCards.length > 0) {
+            const cardsInHand = new Set((currentCards || []).map(c => c.white_card_id));
+            const availableCards = allDeckCards.filter(card => !cardsInHand.has(card.id));
+            
+            if (availableCards.length > 0) {
+              // Pick ONE random card
+              const randomCard = availableCards[Math.floor(Math.random() * availableCards.length)];
+              
+              const { error: insertError } = await supabase
+                .from("player_hands")
+                .insert({
+                  room_id: roomId,
+                  profile_id: player.profile_id,
+                  white_card_id: randomCard.id
+                });
+              
+              if (!insertError) {
+                console.log(`${player.profiles?.username}: +1 card (now has ${currentCount + 1})`);
+              } else {
+                console.log(`${player.profiles?.username}: failed to add card`, insertError.message);
+              }
+            }
+          }
+        } else {
+          console.log(`${player.profiles?.username}: already has ${currentCount} cards, skipping`);
+        }
+      }
+      console.log("=== END CARD REPLENISHMENT ===");
+
       // Clear current round state (it's now completed)
       setCurrentRound(null);
       setSubmissions([]);
@@ -521,7 +584,6 @@ export default function GamePage() {
       setError(`🏆 ${winnerName} wins! Now has ${newScore} point${newScore !== 1 ? 's' : ''}. Next round starting...`);
 
       // Automatically start next round after 2 seconds
-      // Give database time to process the update
       setTimeout(async () => {
         try {
           await nextRound();
@@ -542,8 +604,8 @@ export default function GamePage() {
    * Start next round
    * - Reads most recent completed round from DB (source of truth)
    * - Rotates judge to next player in join order
-   * - Replenishes cards to 10 per player
    * - Creates new round with new judge
+   * NOTE: Card replenishment is done in selectWinner() to ensure it only runs once
    */
   async function nextRound() {
     try {
@@ -662,76 +724,8 @@ export default function GamePage() {
 
       console.log("✅ Rotation verified: Judge will change from", allPlayers[currentJudgeIndex]?.profiles?.username, "→", nextJudge.profiles?.username);
 
-      // Replenish cards - ensure exactly 10 cards per player
-      // Only runs on the judge's browser (the one that called selectWinner)
-      console.log("=== CARD REPLENISHMENT ===");
-      
-      for (const player of allPlayers) {
-        // Get ALL current cards for this player
-        const { data: currentCards } = await supabase
-          .from("player_hands")
-          .select("id, white_card_id")
-          .eq("room_id", roomId)
-          .eq("profile_id", player.profile_id);
-        
-        const currentCount = currentCards?.length || 0;
-        console.log(`${player.profiles?.username}: has ${currentCount} cards`);
-
-        // If player has MORE than 10 cards, delete the excess
-        if (currentCount > 10) {
-          const cardsToDelete = currentCards.slice(10); // Keep first 10, delete rest
-          console.log(`${player.profiles?.username}: OVER LIMIT! Deleting ${cardsToDelete.length} excess cards`);
-          
-          for (const card of cardsToDelete) {
-            await supabase
-              .from("player_hands")
-              .delete()
-              .eq("id", card.id);
-          }
-        }
-
-        // Skip adding cards if player already has 10+
-        if (currentCount >= 10) {
-          console.log(`${player.profiles?.username}: has enough cards`);
-          continue;
-        }
-        
-        // Calculate how many cards to add
-        const cardsNeeded = 10 - currentCount;
-        console.log(`${player.profiles?.username}: needs ${cardsNeeded} card(s)`);
-        
-        // Get available cards from deck (not already in hand)
-        const { data: allDeckCards } = await supabase
-          .from("white_cards")
-          .select("id")
-          .eq("deck_id", room.deck_id);
-        
-        if (allDeckCards && allDeckCards.length > 0) {
-          const cardsInHand = new Set((currentCards || []).map(c => c.white_card_id));
-          const availableCards = allDeckCards.filter(card => !cardsInHand.has(card.id));
-          const shuffled = [...availableCards].sort(() => Math.random() - 0.5);
-          const cardsToAdd = shuffled.slice(0, cardsNeeded);
-          
-          let addedCount = 0;
-          for (const card of cardsToAdd) {
-            const { error: insertError } = await supabase
-              .from("player_hands")
-              .insert({
-                room_id: roomId,
-                profile_id: player.profile_id,
-                white_card_id: card.id
-              });
-            
-            // Only count successful inserts (ignore duplicates)
-            if (!insertError) {
-              addedCount++;
-            }
-          }
-          
-          console.log(`${player.profiles?.username}: added ${addedCount} card(s)`);
-        }
-      }
-      console.log("=== END CARD REPLENISHMENT ===");
+      // Card replenishment is now done in selectWinner() before calling nextRound()
+      // This ensures only the judge's browser adds cards, and only once per round
 
       // Clear submissions state
       setSubmissions([]);
