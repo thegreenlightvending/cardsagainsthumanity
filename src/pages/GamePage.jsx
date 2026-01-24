@@ -304,8 +304,7 @@ export default function GamePage() {
     
     console.log("Round created successfully:", {
       round_id: newRound[0]?.id,
-      judge_id: newRound[0]?.judge_profile_id,
-      judge_name: verifyJudge?.profiles?.username
+      judge_id: newRound[0]?.judge_profile_id
     });
     console.log("=== END CREATE ACTIVE ROUND ===");
     
