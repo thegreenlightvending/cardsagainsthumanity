@@ -1021,20 +1021,22 @@ export default function GamePage() {
                   )}
                 </div>
 
-                {/* Judge's Submission View */}
-                {isJudge && currentRound && (
-                  <div className="bg-purple-900/30 border-2 border-purple-600 rounded-lg p-6">
+                {/* Submissions View - Visible to everyone */}
+                {currentRound && (
+                  <div className={`rounded-lg p-6 ${isJudge ? "bg-purple-900/30 border-2 border-purple-600" : "bg-zinc-800 border border-zinc-700"}`}>
                     <div className="text-center mb-4">
-                      <h3 className="text-2xl font-bold text-purple-200 mb-2">
-                        ⚖️ Judge's Choice
+                      <h3 className={`text-2xl font-bold mb-2 ${isJudge ? "text-purple-200" : "text-zinc-200"}`}>
+                        {isJudge ? "⚖️ Judge's Choice" : "📋 Submitted Cards"}
                       </h3>
-                      <p className="text-purple-300">
+                      <p className={isJudge ? "text-purple-300" : "text-zinc-400"}>
                         Submitted Cards: <span className="font-bold text-white">{submissions.length} / {nonJudgeCount}</span>
                       </p>
                     </div>
                     {submissions.length === 0 ? (
                       <div className="text-center py-8">
-                        <p className="text-purple-300 text-lg">Waiting for players to submit cards...</p>
+                        <p className={`text-lg ${isJudge ? "text-purple-300" : "text-zinc-400"}`}>
+                          Waiting for players to submit cards...
+                        </p>
                       </div>
                     ) : (
                       <div>
@@ -1046,31 +1048,36 @@ export default function GamePage() {
                           </div>
                         )}
                         {submissions.length === nonJudgeCount && (
-                          <div className="bg-green-900/30 border-2 border-green-500 rounded-lg p-4 mb-4 text-center">
-                            <p className="text-green-300 font-bold text-xl">✓ All cards submitted!</p>
-                            <p className="text-green-200 text-lg mt-1">Click on your favorite card to choose the winner:</p>
+                          <div className={`rounded-lg p-4 mb-4 text-center ${isJudge ? "bg-green-900/30 border-2 border-green-500" : "bg-blue-900/30 border border-blue-500"}`}>
+                            <p className={`font-bold text-xl ${isJudge ? "text-green-300" : "text-blue-300"}`}>
+                              ✓ All cards submitted!
+                            </p>
+                            <p className={`text-lg mt-1 ${isJudge ? "text-green-200" : "text-blue-200"}`}>
+                              {isJudge ? "Click on your favorite card to choose the winner:" : "Waiting for judge to pick the winner..."}
+                            </p>
                           </div>
                         )}
                         <div className="grid grid-cols-1 gap-4">
                           {submissions.map((submission, index) => (
-                            <button
+                            <div
                               key={submission.id}
-                              onClick={() => selectWinner(submission.id)}
-                              className="bg-white text-black p-5 rounded-lg text-left hover:bg-yellow-100 hover:scale-105 border-2 border-transparent hover:border-yellow-500 transition-all shadow-lg hover:shadow-xl cursor-pointer"
+                              onClick={() => isJudge && selectWinner(submission.id)}
+                              className={`bg-white text-black p-5 rounded-lg text-left transition-all shadow-lg ${
+                                isJudge 
+                                  ? "hover:bg-yellow-100 hover:scale-105 border-2 border-transparent hover:border-yellow-500 hover:shadow-xl cursor-pointer" 
+                                  : "border-2 border-zinc-300 cursor-default"
+                              }`}
                             >
                               <div className="flex justify-between items-start mb-2">
                                 <div className="font-bold text-sm text-purple-600 bg-purple-100 px-2 py-1 rounded">
                                   Card #{index + 1}
                                 </div>
-                                <div className="text-xs text-zinc-500">Click to select winner</div>
+                                {isJudge && (
+                                  <div className="text-xs text-zinc-500">Click to select winner</div>
+                                )}
                               </div>
                               <div className="text-lg font-medium">{submission.white_cards?.text}</div>
-                              {submission.profiles && (
-                                <div className="text-xs text-zinc-500 mt-2">
-                                  Submitted by: {submission.profiles.username}
-                                </div>
-                              )}
-                            </button>
+                            </div>
                           ))}
                         </div>
                       </div>
