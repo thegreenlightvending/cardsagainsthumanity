@@ -651,14 +651,34 @@ export default function GamePage() {
       console.log("✅ Rotation verified: Judge will change from", allPlayers[currentJudgeIndex]?.profiles?.username, "→", nextJudge.profiles?.username);
 
       // Replenish cards to 10 per player
+      // Skip the PREVIOUS judge (they didn't submit a card)
+      // The NEW judge DID submit a card last round, so they need replenishment
+      console.log("=== CARD REPLENISHMENT ===");
       for (const player of allPlayers) {
+        // Skip the PREVIOUS judge - they didn't submit a card this round
+        if (player.profile_id === completedRoundJudgeId) {
+          console.log(`Skipping ${player.profiles?.username} (was judge, didn't submit)`);
+          continue;
+        }
+
+        // Get current card count
         const { data: currentCards } = await supabase
           .from("player_hands")
           .select("white_card_id")
           .eq("room_id", roomId)
           .eq("profile_id", player.profile_id);
         
-        const cardsNeeded = 10 - (currentCards?.length || 0);
+        const currentCount = currentCards?.length || 0;
+        console.log(`${player.profiles?.username}: has ${currentCount} cards`);
+
+        // Only add cards if under 10
+        if (currentCount >= 10) {
+          console.log(`${player.profiles?.username}: already has 10+ cards, skipping`);
+          continue;
+        }
+        
+        const cardsNeeded = 10 - currentCount;
+        console.log(`${player.profiles?.username}: needs ${cardsNeeded} card(s)`);
         
         if (cardsNeeded > 0) {
           const { data: allDeckCards } = await supabase
@@ -670,31 +690,45 @@ export default function GamePage() {
             const cardsInHand = new Set((currentCards || []).map(c => c.white_card_id));
             const availableCards = allDeckCards.filter(card => !cardsInHand.has(card.id));
             const shuffled = [...availableCards].sort(() => Math.random() - 0.5);
-            const cardsToAdd = shuffled.slice(0, Math.min(cardsNeeded, shuffled.length));
+            const cardsToAdd = shuffled.slice(0, cardsNeeded);
             
             if (cardsToAdd.length > 0) {
-              // Insert cards, ignoring duplicates (prevents 409 errors)
-              const cardsToInsert = cardsToAdd.map(card => ({
-                room_id: roomId,
-                profile_id: player.profile_id,
-                white_card_id: card.id
-              }));
+              let addedCount = 0;
               
-              // Insert one at a time to handle duplicates gracefully
-              for (const cardData of cardsToInsert) {
+              // Insert one at a time, checking count before each insert
+              for (const card of cardsToAdd) {
+                // Re-check count before each insert to prevent going over 10
+                const { data: recheck } = await supabase
+                  .from("player_hands")
+                  .select("id")
+                  .eq("room_id", roomId)
+                  .eq("profile_id", player.profile_id);
+                
+                if ((recheck?.length || 0) >= 10) {
+                  console.log(`${player.profiles?.username}: reached 10 cards, stopping`);
+                  break;
+                }
+                
                 const { error: insertError } = await supabase
                   .from("player_hands")
-                  .insert(cardData);
+                  .insert({
+                    room_id: roomId,
+                    profile_id: player.profile_id,
+                    white_card_id: card.id
+                  });
                 
-                // Ignore duplicate key errors (card already in hand)
-                if (insertError && insertError.code !== '23505' && insertError.code !== 'PGRST116') {
-                  console.error("Error adding card to hand:", insertError);
+                // Ignore duplicate key errors
+                if (!insertError || insertError.code === '23505' || insertError.code === 'PGRST116') {
+                  if (!insertError) addedCount++;
                 }
               }
+              
+              console.log(`${player.profiles?.username}: added ${addedCount} card(s)`);
             }
           }
         }
       }
+      console.log("=== END CARD REPLENISHMENT ===");
 
       // Clear submissions state
       setSubmissions([]);
