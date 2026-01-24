@@ -30,6 +30,7 @@ export default function GamePage() {
   // UI State
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [isProcessingWinner, setIsProcessingWinner] = useState(false);
 
   // Polling for real-time updates (every 2 seconds)
   useEffect(() => {
@@ -376,7 +377,15 @@ export default function GamePage() {
    * - Automatically starts next round after 2 seconds
    */
   async function selectWinner(submissionId) {
+    // Prevent double-clicking
+    if (isProcessingWinner) {
+      console.log("Already processing winner, ignoring click");
+      return;
+    }
+
     try {
+      setIsProcessingWinner(true);
+      
       console.log("=== SELECT WINNER CALLED ===");
       console.log("Submission ID:", submissionId);
       console.log("Current round ID:", currentRound?.id);
@@ -388,6 +397,7 @@ export default function GamePage() {
       if (currentRound?.judge_profile_id !== user.id) {
         console.error("Judge check FAILED!");
         setError("Only the judge can select a winner");
+        setIsProcessingWinner(false);
         return;
       }
 
@@ -524,6 +534,7 @@ export default function GamePage() {
     } catch (err) {
       console.error("Select winner error:", err);
       setError("Failed to select winner: " + err.message);
+      setIsProcessingWinner(false);
     }
   }
 
@@ -561,6 +572,7 @@ export default function GamePage() {
           console.log("Setting existing round, judge:", existingRound.profiles?.username);
           setCurrentRound(existingRound);
         }
+        setIsProcessingWinner(false);
         return;
       }
 
@@ -650,82 +662,73 @@ export default function GamePage() {
 
       console.log("✅ Rotation verified: Judge will change from", allPlayers[currentJudgeIndex]?.profiles?.username, "→", nextJudge.profiles?.username);
 
-      // Replenish cards to 10 per player
-      // Skip the PREVIOUS judge (they didn't submit a card)
-      // The NEW judge DID submit a card last round, so they need replenishment
+      // Replenish cards - ensure exactly 10 cards per player
+      // Only runs on the judge's browser (the one that called selectWinner)
       console.log("=== CARD REPLENISHMENT ===");
+      
       for (const player of allPlayers) {
-        // Skip the PREVIOUS judge - they didn't submit a card this round
-        if (player.profile_id === completedRoundJudgeId) {
-          console.log(`Skipping ${player.profiles?.username} (was judge, didn't submit)`);
-          continue;
-        }
-
-        // Get current card count
+        // Get ALL current cards for this player
         const { data: currentCards } = await supabase
           .from("player_hands")
-          .select("white_card_id")
+          .select("id, white_card_id")
           .eq("room_id", roomId)
           .eq("profile_id", player.profile_id);
         
         const currentCount = currentCards?.length || 0;
         console.log(`${player.profiles?.username}: has ${currentCount} cards`);
 
-        // Only add cards if under 10
+        // If player has MORE than 10 cards, delete the excess
+        if (currentCount > 10) {
+          const cardsToDelete = currentCards.slice(10); // Keep first 10, delete rest
+          console.log(`${player.profiles?.username}: OVER LIMIT! Deleting ${cardsToDelete.length} excess cards`);
+          
+          for (const card of cardsToDelete) {
+            await supabase
+              .from("player_hands")
+              .delete()
+              .eq("id", card.id);
+          }
+        }
+
+        // Skip adding cards if player already has 10+
         if (currentCount >= 10) {
-          console.log(`${player.profiles?.username}: already has 10+ cards, skipping`);
+          console.log(`${player.profiles?.username}: has enough cards`);
           continue;
         }
         
+        // Calculate how many cards to add
         const cardsNeeded = 10 - currentCount;
         console.log(`${player.profiles?.username}: needs ${cardsNeeded} card(s)`);
         
-        if (cardsNeeded > 0) {
-          const { data: allDeckCards } = await supabase
-            .from("white_cards")
-            .select("id")
-            .eq("deck_id", room.deck_id);
+        // Get available cards from deck (not already in hand)
+        const { data: allDeckCards } = await supabase
+          .from("white_cards")
+          .select("id")
+          .eq("deck_id", room.deck_id);
+        
+        if (allDeckCards && allDeckCards.length > 0) {
+          const cardsInHand = new Set((currentCards || []).map(c => c.white_card_id));
+          const availableCards = allDeckCards.filter(card => !cardsInHand.has(card.id));
+          const shuffled = [...availableCards].sort(() => Math.random() - 0.5);
+          const cardsToAdd = shuffled.slice(0, cardsNeeded);
           
-          if (allDeckCards && allDeckCards.length > 0) {
-            const cardsInHand = new Set((currentCards || []).map(c => c.white_card_id));
-            const availableCards = allDeckCards.filter(card => !cardsInHand.has(card.id));
-            const shuffled = [...availableCards].sort(() => Math.random() - 0.5);
-            const cardsToAdd = shuffled.slice(0, cardsNeeded);
+          let addedCount = 0;
+          for (const card of cardsToAdd) {
+            const { error: insertError } = await supabase
+              .from("player_hands")
+              .insert({
+                room_id: roomId,
+                profile_id: player.profile_id,
+                white_card_id: card.id
+              });
             
-            if (cardsToAdd.length > 0) {
-              let addedCount = 0;
-              
-              // Insert one at a time, checking count before each insert
-              for (const card of cardsToAdd) {
-                // Re-check count before each insert to prevent going over 10
-                const { data: recheck } = await supabase
-                  .from("player_hands")
-                  .select("id")
-                  .eq("room_id", roomId)
-                  .eq("profile_id", player.profile_id);
-                
-                if ((recheck?.length || 0) >= 10) {
-                  console.log(`${player.profiles?.username}: reached 10 cards, stopping`);
-                  break;
-                }
-                
-                const { error: insertError } = await supabase
-                  .from("player_hands")
-                  .insert({
-                    room_id: roomId,
-                    profile_id: player.profile_id,
-                    white_card_id: card.id
-                  });
-                
-                // Ignore duplicate key errors
-                if (!insertError || insertError.code === '23505' || insertError.code === 'PGRST116') {
-                  if (!insertError) addedCount++;
-                }
-              }
-              
-              console.log(`${player.profiles?.username}: added ${addedCount} card(s)`);
+            // Only count successful inserts (ignore duplicates)
+            if (!insertError) {
+              addedCount++;
             }
           }
+          
+          console.log(`${player.profiles?.username}: added ${addedCount} card(s)`);
         }
       }
       console.log("=== END CARD REPLENISHMENT ===");
@@ -829,10 +832,12 @@ export default function GamePage() {
 
       setError(`New round! ${nextJudge.profiles?.username} is now the judge.`);
       setTimeout(() => setError(""), 4000);
+      setIsProcessingWinner(false);
 
     } catch (err) {
       console.error("Next round error:", err);
       setError("Failed to start next round: " + err.message);
+      setIsProcessingWinner(false);
     }
   }
 
