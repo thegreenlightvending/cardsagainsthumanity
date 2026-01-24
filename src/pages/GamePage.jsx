@@ -399,10 +399,10 @@ export default function GamePage() {
         return;
       }
 
-      // Check if user already submitted
+      // Check if user already submitted for THIS round
       const { data: existingSubmissions, error: checkError } = await supabase
         .from("submissions")
-        .select("id")
+        .select("id, white_card_id")
         .eq("round_id", roundToUse.id)
         .eq("profile_id", user.id)
         .limit(1);
@@ -411,8 +411,27 @@ export default function GamePage() {
         console.error("Error checking existing submission:", checkError);
         // Don't block submission if check fails - let the insert handle duplicates
       } else if (existingSubmissions && existingSubmissions.length > 0) {
+        console.warn("User already submitted for this round:", {
+          round_id: roundToUse.id,
+          existing_submission: existingSubmissions[0],
+          attempted_card: cardId
+        });
         setError("You already submitted a card for this round");
         return;
+      }
+      
+      // Also check if this specific card was already submitted by this user in this round
+      // (defense against double-clicks or race conditions)
+      if (existingSubmissions && existingSubmissions.length > 0) {
+        const existingCard = existingSubmissions.find(s => s.white_card_id === cardId);
+        if (existingCard) {
+          console.warn("This exact card was already submitted:", {
+            card_id: cardId,
+            submission_id: existingCard.id
+          });
+          setError("This card was already submitted");
+          return;
+        }
       }
 
       // Submit card
@@ -452,16 +471,42 @@ export default function GamePage() {
       }
 
       // Refresh submissions immediately so judge sees the new card
+      // IMPORTANT: Only load submissions for THIS specific round to prevent duplicates
       const { data: submissionsData, error: submissionsError } = await supabase
         .from("submissions")
         .select("*, white_cards(text), profiles(username)")
-        .eq("round_id", roundToUse.id);
+        .eq("round_id", roundToUse.id) // Only submissions for current round
+        .order("created_at", { ascending: true }); // Order by submission time
       
       if (submissionsError) {
         console.error("Error refreshing submissions after submit:", submissionsError);
       } else {
-        console.log("Refreshed submissions after submit:", submissionsData?.length || 0);
-        setSubmissions(submissionsData || []);
+        // Verify no duplicates (same user, same round, same card)
+        const uniqueSubmissions = submissionsData?.filter((sub, index, self) => 
+          index === self.findIndex(s => 
+            s.id === sub.id && 
+            s.profile_id === sub.profile_id && 
+            s.round_id === sub.round_id
+          )
+        ) || [];
+        
+        if (uniqueSubmissions.length !== (submissionsData?.length || 0)) {
+          console.warn("Duplicate submissions detected! Filtered:", {
+            before: submissionsData?.length || 0,
+            after: uniqueSubmissions.length
+          });
+        }
+        
+        console.log("Refreshed submissions after submit:", {
+          count: uniqueSubmissions.length,
+          round_id: roundToUse.id,
+          submissions: uniqueSubmissions.map(s => ({
+            id: s.id,
+            profile: s.profiles?.username,
+            card: s.white_cards?.text
+          }))
+        });
+        setSubmissions(uniqueSubmissions);
       }
 
       // Refresh player hand
@@ -497,18 +542,24 @@ export default function GamePage() {
       });
 
       // STEP 1: Award point to the winner FIRST (before ending round)
-      const { data: currentPlayer, error: scoreQueryError } = await supabase
+      // Don't use .single() with joins - handle as array
+      const { data: currentPlayers, error: scoreQueryError } = await supabase
         .from("room_players")
         .select("score, profiles(username)")
         .eq("room_id", roomId)
         .eq("profile_id", submission.profile_id)
-        .single();
+        .limit(1);
       
       if (scoreQueryError) {
         console.error("Error fetching current score:", scoreQueryError);
         throw new Error("Failed to fetch winner's score: " + scoreQueryError.message);
       }
       
+      if (!currentPlayers || currentPlayers.length === 0) {
+        throw new Error("Player not found in room");
+      }
+      
+      const currentPlayer = currentPlayers[0];
       const currentScore = currentPlayer?.score || 0;
       const newScore = currentScore + 1;
       
@@ -518,23 +569,26 @@ export default function GamePage() {
         newScore
       });
       
-      const { data: updatedPlayer, error: scoreUpdateError } = await supabase
+      // Update score - don't use .single() on UPDATE queries with joins
+      const { data: updatedPlayers, error: scoreUpdateError } = await supabase
         .from("room_players")
         .update({ score: newScore })
         .eq("room_id", roomId)
         .eq("profile_id", submission.profile_id)
-        .select("score, profiles(username)")
-        .single();
+        .select("score, profiles(username)");
       
       if (scoreUpdateError) {
         console.error("Error updating score:", scoreUpdateError);
         throw new Error("Failed to update winner's score: " + scoreUpdateError.message);
       }
       
-      if (!updatedPlayer) {
+      if (!updatedPlayers || updatedPlayers.length === 0) {
         console.error("Score update returned no data");
         throw new Error("Score update failed - no data returned");
       }
+      
+      // Get the first (and should be only) updated player
+      const updatedPlayer = updatedPlayers[0];
       
       console.log("✓ Point awarded successfully:", {
         player: updatedPlayer.profiles?.username,
@@ -546,8 +600,7 @@ export default function GamePage() {
       // STEP 2: Mark round as completed
       const { error: roundUpdateError } = await supabase.from("rounds").update({
         winner_profile_id: submission.profile_id,
-        status: "completed",
-        ended_at: new Date().toISOString()
+        status: "completed"
       }).eq("id", currentRound.id);
       
       if (roundUpdateError) {
@@ -785,7 +838,12 @@ export default function GamePage() {
       }
       console.log("✓ Cards replenished");
 
-      // STEP 5: Create new round with new judge (this creates new black card and sets judge)
+      // STEP 5: Clear old submissions from previous round (to prevent duplicates)
+      // This ensures only submissions for the new round are shown
+      console.log("Clearing submissions state for new round");
+      setSubmissions([]);
+      
+      // STEP 6: Create new round with new judge (this creates new black card and sets judge)
       console.log("Creating new round with new judge:", nextJudge.profiles?.username);
       const newRound = await createActiveRound(nextJudge.profile_id);
       
@@ -795,7 +853,7 @@ export default function GamePage() {
       
       console.log("✓ New round created - Judge:", nextJudge.profiles?.username);
       
-      // STEP 6: Load full round details and update state
+      // STEP 7: Load full round details and update state
       const { data: fullRound, error: roundLoadError } = await supabase
         .from("rounds")
         .select(`
@@ -814,7 +872,7 @@ export default function GamePage() {
       
       setHasActiveRound(true);
 
-      // STEP 7: Refresh all game data
+      // STEP 8: Refresh all game data (this will load submissions for the NEW round only)
       await loadGameData();
       
       // STEP 8: Verify the new judge was set correctly
