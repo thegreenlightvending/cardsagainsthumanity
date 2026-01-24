@@ -373,11 +373,21 @@ export default function GamePage() {
    */
   async function selectWinner(submissionId) {
     try {
+      console.log("=== SELECT WINNER CALLED ===");
+      console.log("Submission ID:", submissionId);
+      console.log("Current round ID:", currentRound?.id);
+      console.log("Current round judge:", currentRound?.judge_profile_id);
+      console.log("Current user:", user.id);
+      console.log("Is user the judge?", currentRound?.judge_profile_id === user.id);
+
       // Verify user is the judge
       if (currentRound?.judge_profile_id !== user.id) {
+        console.error("Judge check FAILED!");
         setError("Only the judge can select a winner");
         return;
       }
+
+      console.log("✅ Judge check passed, getting submission...");
 
       // Get submission to find winner
       const { data: submission, error: submissionError } = await supabase
@@ -387,8 +397,11 @@ export default function GamePage() {
         .single();
 
       if (submissionError || !submission) {
+        console.error("Submission error:", submissionError);
         throw new Error("Submission not found");
       }
+
+      console.log("✅ Submission found, winner profile_id:", submission.profile_id);
 
       // Get winner's current score
       const { data: winnerData, error: winnerError } = await supabase
@@ -408,7 +421,8 @@ export default function GamePage() {
 
       console.log("=== SCORE UPDATE ===");
       console.log("Winner:", winnerData.profiles?.username);
-      console.log("Current score:", currentScore);
+      console.log("Winner profile_id:", submission.profile_id);
+      console.log("Current score from DB:", currentScore);
       console.log("New score (after +1):", newScore);
 
       // Award point to winner
@@ -423,8 +437,23 @@ export default function GamePage() {
         throw new Error("Failed to update score: " + updateError.message);
       }
 
+      // VERIFY the score was actually saved to database
+      const { data: verifyScore } = await supabase
+        .from("room_players")
+        .select("score")
+        .eq("room_id", roomId)
+        .eq("profile_id", submission.profile_id)
+        .single();
+
       console.log("Score updated successfully!");
-      console.log("New score should be:", newScore);
+      console.log("Expected new score:", newScore);
+      console.log("VERIFIED score in DB:", verifyScore?.score);
+      
+      if (verifyScore?.score !== newScore) {
+        console.error("❌ SCORE MISMATCH! Expected:", newScore, "Got:", verifyScore?.score);
+      } else {
+        console.log("✅ Score verified in database!");
+      }
       console.log("=== END SCORE UPDATE ===");
 
       // Mark round as completed - verify it actually updated
