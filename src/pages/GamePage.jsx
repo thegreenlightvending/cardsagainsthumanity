@@ -69,7 +69,11 @@ export default function GamePage() {
         .eq("room_id", roomId)
         .order("joined_at", { ascending: true });
       
-      if (playersData) setPlayers(playersData);
+      if (playersData) {
+        // Log scores during polling (uncomment for debugging)
+        // console.log("POLL: players scores:", playersData.map(p => `${p.profiles?.username}: ${p.score}`).join(", "));
+        setPlayers(playersData);
+      }
 
       // If game is playing, load active round (only one submitting round per room)
       if (roomData?.status === "playing") {
@@ -772,13 +776,18 @@ export default function GamePage() {
         .order("joined_at", { ascending: true });
       
       if (refreshedPlayers) {
+        console.log("=== FORCED PLAYERS UPDATE (nextRound) ===");
+        refreshedPlayers.forEach(p => {
+          console.log(`${p.profiles?.username}: ${p.score} points (from DB)`);
+        });
+        
         // Ensure only the correct player has is_judge = true
         const updatedPlayers = refreshedPlayers.map(p => ({
           ...p,
           is_judge: p.profile_id === nextJudge.profile_id
         }));
         setPlayers(updatedPlayers);
-        console.log("✅ FORCED players list update");
+        console.log("✅ FORCED players list update with scores above");
       }
 
       // Clear submissions for new round
