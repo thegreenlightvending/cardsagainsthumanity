@@ -507,19 +507,33 @@ export default function GamePage() {
       }
       console.log("=== END SCORE UPDATE ===");
 
-      // Mark round as completed - verify it actually updated
-      const { error: roundUpdateError } = await supabase
+      // Mark round as completed - RETURN the updated row to verify we were the one to update it
+      const { data: updatedRound, error: roundUpdateError } = await supabase
         .from("rounds")
         .update({
           winner_profile_id: submission.profile_id,
           status: "completed"
         })
         .eq("id", currentRound.id)
-        .eq("status", "submitting"); // Only update if still submitting (prevents double-updates)
+        .eq("status", "submitting") // Only update if still submitting (prevents double-updates)
+        .select();
 
       if (roundUpdateError) {
         throw new Error("Failed to complete round: " + roundUpdateError.message);
       }
+
+      // CRITICAL: If no rows were updated, another browser already completed this round
+      // This browser should NOT create the next round
+      if (!updatedRound || updatedRound.length === 0) {
+        console.log("Round already completed by another browser - skipping next round creation");
+        setCurrentRound(null);
+        setSubmissions([]);
+        setIsProcessingWinner(false);
+        await loadGameData(); // Just refresh to get the new round
+        return;
+      }
+
+      console.log("✅ This browser completed the round, will create next round");
 
       // Verify the round was actually marked as completed
       const { data: verifyRound } = await supabase
@@ -558,8 +572,30 @@ export default function GamePage() {
       // Get the current judge ID (the one who just finished judging)
       const currentJudgeId = currentRound.judge_profile_id;
       
+      // First, get ALL cards currently in ANY player's hand in this room
+      const { data: allHandsInRoom } = await supabase
+        .from("player_hands")
+        .select("white_card_id")
+        .eq("room_id", roomId);
+      
+      const cardsInAnyHand = new Set((allHandsInRoom || []).map(h => h.white_card_id));
+      console.log(`Cards already in room: ${cardsInAnyHand.size}`);
+      
+      // Get all deck cards for this room
+      const { data: allDeckCards } = await supabase
+        .from("white_cards")
+        .select("id")
+        .eq("deck_id", room.deck_id);
+      
+      // Available cards = deck cards NOT in any player's hand
+      const availableCards = (allDeckCards || []).filter(card => !cardsInAnyHand.has(card.id));
+      console.log(`Available cards in deck: ${availableCards.length}`);
+      
+      // Shuffle once
+      const shuffledAvailable = [...availableCards].sort(() => Math.random() - 0.5);
+      let cardIndex = 0;
+      
       // Replenish cards for players who submitted (everyone except the current judge)
-      // For multi-pick rounds, players may need multiple cards refilled
       for (const player of refreshedPlayers) {
         // Skip the CURRENT judge - they didn't submit a card
         if (player.profile_id === currentJudgeId) {
@@ -567,10 +603,10 @@ export default function GamePage() {
           continue;
         }
         
-        // Count current cards
+        // Count current cards for this player
         const { data: currentCards } = await supabase
           .from("player_hands")
-          .select("id, white_card_id")
+          .select("id")
           .eq("room_id", roomId)
           .eq("profile_id", player.profile_id);
         
@@ -578,39 +614,31 @@ export default function GamePage() {
         const cardsNeeded = 10 - currentCount;
         console.log(`${player.profiles?.username}: has ${currentCount} cards, needs ${cardsNeeded}`);
         
-        // Refill to 10 cards (handles multi-pick)
-        if (cardsNeeded > 0) {
-          // Get available cards not in their hand
-          const { data: allDeckCards } = await supabase
-            .from("white_cards")
-            .select("id")
-            .eq("deck_id", room.deck_id);
-          
-          if (allDeckCards && allDeckCards.length > 0) {
-            const cardsInHand = new Set((currentCards || []).map(c => c.white_card_id));
-            const availableCards = allDeckCards.filter(card => !cardsInHand.has(card.id));
+        // Refill to 10 cards
+        if (cardsNeeded > 0 && cardIndex < shuffledAvailable.length) {
+          let added = 0;
+          for (let i = 0; i < cardsNeeded && cardIndex < shuffledAvailable.length; i++) {
+            const card = shuffledAvailable[cardIndex++];
             
-            // Shuffle and pick needed cards
-            const shuffled = [...availableCards].sort(() => Math.random() - 0.5);
-            const cardsToAdd = shuffled.slice(0, cardsNeeded);
+            const { error: insertError } = await supabase
+              .from("player_hands")
+              .insert({
+                room_id: roomId,
+                profile_id: player.profile_id,
+                white_card_id: card.id
+              });
             
-            for (const card of cardsToAdd) {
-              const { error: insertError } = await supabase
-                .from("player_hands")
-                .insert({
-                  room_id: roomId,
-                  profile_id: player.profile_id,
-                  white_card_id: card.id
-                });
-              
-              if (insertError) {
-                console.log(`${player.profiles?.username}: failed to add card`, insertError.message);
-              }
+            if (!insertError) {
+              added++;
+            } else {
+              console.log(`${player.profiles?.username}: failed to add card`, insertError.message);
             }
-            console.log(`${player.profiles?.username}: +${cardsToAdd.length} cards (now has ${currentCount + cardsToAdd.length})`);
           }
-        } else {
+          console.log(`${player.profiles?.username}: +${added} cards (now has ${currentCount + added})`);
+        } else if (cardsNeeded <= 0) {
           console.log(`${player.profiles?.username}: already has ${currentCount} cards, skipping`);
+        } else {
+          console.log(`${player.profiles?.username}: no more available cards in deck!`);
         }
       }
       console.log("=== END CARD REPLENISHMENT ===");
@@ -692,13 +720,14 @@ export default function GamePage() {
       }
 
       console.log("=== JUDGE ROTATION DEBUG ===");
-      console.log("All completed rounds:", allCompletedRounds?.map(r => ({
-        id: r.id,
-        judge: r.judge_profile_id,
-        status: r.status
-      })));
+      console.log("All completed rounds (last 5):");
+      allCompletedRounds?.forEach((r, i) => {
+        console.log(`  ${i}: Round ${r.id}, judge=${r.judge_profile_id}, status=${r.status}`);
+      });
 
       const completedRoundJudgeId = allCompletedRounds?.[0]?.judge_profile_id;
+      const lastCompletedRoundId = allCompletedRounds?.[0]?.id;
+      console.log(`Using most recent: Round ${lastCompletedRoundId}, judge_id=${completedRoundJudgeId}`);
 
       if (!completedRoundJudgeId) {
         throw new Error("Could not determine previous judge for rotation.");
