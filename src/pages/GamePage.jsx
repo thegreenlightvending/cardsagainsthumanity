@@ -26,6 +26,7 @@ export default function GamePage() {
   const [submissions, setSubmissions] = useState([]);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
+  const [selectedCards, setSelectedCards] = useState([]); // For multi-pick cards
 
   // UI State
   const [loading, setLoading] = useState(true);
@@ -40,6 +41,11 @@ export default function GamePage() {
     const interval = setInterval(loadGameData, 2000);
     return () => clearInterval(interval);
   }, [roomId, user]);
+
+  // Clear selected cards when round changes
+  useEffect(() => {
+    setSelectedCards([]);
+  }, [currentRound?.id]);
 
   /**
    * Load all game data from database
@@ -82,7 +88,7 @@ export default function GamePage() {
           .from("rounds")
           .select(`
             *,
-            black_cards(text),
+            black_cards(text, pick),
             profiles!judge_profile_id(username)
           `)
           .eq("room_id", roomId)
@@ -317,12 +323,36 @@ export default function GamePage() {
   }
 
   /**
-   * Submit a white card
+   * Toggle card selection (for multi-pick cards)
    */
-  async function submitCard(cardId) {
+  function toggleCardSelection(cardId) {
+    const pickCount = currentRound?.black_cards?.pick || 1;
+    
+    if (selectedCards.includes(cardId)) {
+      // Deselect the card
+      setSelectedCards(selectedCards.filter(id => id !== cardId));
+    } else {
+      // Select the card (if we haven't reached the limit)
+      if (selectedCards.length < pickCount) {
+        setSelectedCards([...selectedCards, cardId]);
+      }
+    }
+  }
+
+  /**
+   * Submit selected white card(s)
+   */
+  async function submitCards() {
     try {
       if (!currentRound) {
         setError("No active round");
+        return;
+      }
+
+      const pickCount = currentRound?.black_cards?.pick || 1;
+      
+      if (selectedCards.length !== pickCount) {
+        setError(`Select ${pickCount} card${pickCount > 1 ? 's' : ''} to submit`);
         return;
       }
 
@@ -335,38 +365,45 @@ export default function GamePage() {
         .limit(1);
       
       if (existing && existing.length > 0) {
-        setError("You already submitted a card");
+        setError("You already submitted");
         return;
       }
 
-      // Submit card
-      const { error: submitError } = await supabase
-        .from("submissions")
-        .insert({
-          round_id: currentRound.id,
-          profile_id: user.id,
-          white_card_id: cardId
-        });
+      // Submit all selected cards (in order)
+      // For multi-pick, we'll store them as separate submissions with an order field
+      // But since the schema might not have an order field, we'll concatenate card IDs
+      // Actually, let's submit each card as a separate submission
+      for (let i = 0; i < selectedCards.length; i++) {
+        const cardId = selectedCards[i];
+        const { error: submitError } = await supabase
+          .from("submissions")
+          .insert({
+            round_id: currentRound.id,
+            profile_id: user.id,
+            white_card_id: cardId
+          });
 
-      if (submitError) {
-        throw submitError;
+        if (submitError) {
+          throw submitError;
+        }
+
+        // Remove card from hand
+        await supabase
+          .from("player_hands")
+          .delete()
+          .eq("profile_id", user.id)
+          .eq("white_card_id", cardId)
+          .eq("room_id", roomId);
       }
 
-      // Remove card from hand
-      await supabase
-        .from("player_hands")
-        .delete()
-        .eq("profile_id", user.id)
-        .eq("white_card_id", cardId)
-        .eq("room_id", roomId);
-
-      // Refresh data
+      // Clear selection and refresh data
+      setSelectedCards([]);
       await loadGameData();
-      setError("Card submitted!");
+      setError(`Card${pickCount > 1 ? 's' : ''} submitted!`);
 
     } catch (err) {
       console.error("Submit error:", err);
-      setError("Failed to submit card: " + err.message);
+      setError("Failed to submit: " + err.message);
     }
   }
 
@@ -522,6 +559,7 @@ export default function GamePage() {
       const currentJudgeId = currentRound.judge_profile_id;
       
       // Replenish cards for players who submitted (everyone except the current judge)
+      // For multi-pick rounds, players may need multiple cards refilled
       for (const player of refreshedPlayers) {
         // Skip the CURRENT judge - they didn't submit a card
         if (player.profile_id === currentJudgeId) {
@@ -537,11 +575,12 @@ export default function GamePage() {
           .eq("profile_id", player.profile_id);
         
         const currentCount = currentCards?.length || 0;
-        console.log(`${player.profiles?.username}: has ${currentCount} cards`);
+        const cardsNeeded = 10 - currentCount;
+        console.log(`${player.profiles?.username}: has ${currentCount} cards, needs ${cardsNeeded}`);
         
-        // Only add ONE card if they have less than 10
-        if (currentCount < 10) {
-          // Get a random card not in their hand
+        // Refill to 10 cards (handles multi-pick)
+        if (cardsNeeded > 0) {
+          // Get available cards not in their hand
           const { data: allDeckCards } = await supabase
             .from("white_cards")
             .select("id")
@@ -551,24 +590,24 @@ export default function GamePage() {
             const cardsInHand = new Set((currentCards || []).map(c => c.white_card_id));
             const availableCards = allDeckCards.filter(card => !cardsInHand.has(card.id));
             
-            if (availableCards.length > 0) {
-              // Pick ONE random card
-              const randomCard = availableCards[Math.floor(Math.random() * availableCards.length)];
-              
+            // Shuffle and pick needed cards
+            const shuffled = [...availableCards].sort(() => Math.random() - 0.5);
+            const cardsToAdd = shuffled.slice(0, cardsNeeded);
+            
+            for (const card of cardsToAdd) {
               const { error: insertError } = await supabase
                 .from("player_hands")
                 .insert({
                   room_id: roomId,
                   profile_id: player.profile_id,
-                  white_card_id: randomCard.id
+                  white_card_id: card.id
                 });
               
-              if (!insertError) {
-                console.log(`${player.profiles?.username}: +1 card (now has ${currentCount + 1})`);
-              } else {
+              if (insertError) {
                 console.log(`${player.profiles?.username}: failed to add card`, insertError.message);
               }
             }
+            console.log(`${player.profiles?.username}: +${cardsToAdd.length} cards (now has ${currentCount + cardsToAdd.length})`);
           }
         } else {
           console.log(`${player.profiles?.username}: already has ${currentCount} cards, skipping`);
@@ -885,7 +924,9 @@ export default function GamePage() {
   // Calculate derived state
   const isHost = room.party_leader === user.id;
   const isJudge = currentRound?.judge_profile_id === user.id;
-  const hasSubmitted = submissions.some(s => s.profile_id === user.id);
+  const pickCount = currentRound?.black_cards?.pick || 1;
+  const mySubmissions = submissions.filter(s => s.profile_id === user.id);
+  const hasSubmitted = mySubmissions.length >= pickCount; // Submitted enough cards
   const nonJudgeCount = players.filter(p => 
     currentRound ? currentRound.judge_profile_id !== p.profile_id : !p.is_judge
   ).length;
@@ -994,6 +1035,11 @@ export default function GamePage() {
                     <p className="text-2xl text-white mb-4">
                       {currentRound?.black_cards?.text || "Loading..."}
                     </p>
+                    {(currentRound?.black_cards?.pick || 1) > 1 && (
+                      <p className="text-yellow-400 font-bold mb-2">
+                        🎴 PICK {currentRound?.black_cards?.pick} CARDS
+                      </p>
+                    )}
                     <p className="text-lg text-purple-300 font-semibold">
                       ⚖️ Judge: {currentRound?.profiles?.username || "Judge"}
                     </p>
@@ -1001,12 +1047,21 @@ export default function GamePage() {
                   
                   {/* Game Status */}
                   <div className="bg-zinc-800 rounded-lg p-4">
-                    <p className="text-lg text-zinc-300">
-                      Cards Submitted: {submissions.length} / {nonJudgeCount}
-                    </p>
-                    {submissions.length === nonJudgeCount && nonJudgeCount > 0 && (
-                      <p className="text-yellow-400 mt-2">Judge is choosing winner!</p>
-                    )}
+                    {(() => {
+                      const pickCount = currentRound?.black_cards?.pick || 1;
+                      const uniquePlayers = [...new Set(submissions.map(s => s.profile_id))].length;
+                      return (
+                        <>
+                          <p className="text-lg text-zinc-300">
+                            Players Submitted: {uniquePlayers} / {nonJudgeCount}
+                            {pickCount > 1 && <span className="text-yellow-400 ml-2">({pickCount} cards each)</span>}
+                          </p>
+                          {uniquePlayers === nonJudgeCount && nonJudgeCount > 0 && (
+                            <p className="text-yellow-400 mt-2">Judge is choosing winner!</p>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -1018,27 +1073,70 @@ export default function GamePage() {
                         Your Cards ({playerHand.length}/10)
                         {isJudge && <span className="text-purple-400 ml-2">(You are the Judge)</span>}
                       </h3>
+                      
+                      {/* Selection info for multi-pick cards */}
+                      {!isJudge && !hasSubmitted && (currentRound?.black_cards?.pick || 1) > 1 && (
+                        <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-3 mb-4 text-center">
+                          <p className="text-yellow-300 font-semibold">
+                            Select {currentRound?.black_cards?.pick} cards ({selectedCards.length}/{currentRound?.black_cards?.pick} selected)
+                          </p>
+                        </div>
+                      )}
+                      
                       <div className="grid grid-cols-2 gap-3">
-                        {playerHand.map((card) => (
+                        {playerHand.map((card) => {
+                          const isSelected = selectedCards.includes(card.white_card_id);
+                          const pickCount = currentRound?.black_cards?.pick || 1;
+                          
+                          return (
+                            <button
+                              key={card.id}
+                              onClick={() => !isJudge && !hasSubmitted && toggleCardSelection(card.white_card_id)}
+                              disabled={isJudge || hasSubmitted}
+                              className={`p-4 rounded-lg text-sm font-medium transition-all relative ${
+                                isJudge
+                                  ? "bg-gray-600 text-gray-300 cursor-not-allowed"
+                                  : hasSubmitted
+                                  ? "bg-green-200 text-green-800 cursor-not-allowed"
+                                  : isSelected
+                                  ? "bg-yellow-400 text-black ring-4 ring-yellow-500 scale-105 shadow-xl"
+                                  : "bg-white text-black hover:bg-yellow-100 hover:scale-105 shadow-lg"
+                              }`}
+                            >
+                              {isSelected && (
+                                <span className="absolute -top-2 -right-2 bg-yellow-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">
+                                  {selectedCards.indexOf(card.white_card_id) + 1}
+                                </span>
+                              )}
+                              {card.white_cards?.text}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      
+                      {/* Submit button - shows when cards are selected */}
+                      {!isJudge && !hasSubmitted && selectedCards.length > 0 && (
+                        <div className="mt-4 text-center">
                           <button
-                            key={card.id}
-                            onClick={() => !isJudge && submitCard(card.white_card_id)}
-                            disabled={isJudge || hasSubmitted}
-                            className={`p-4 rounded-lg text-sm font-medium transition-all ${
-                              isJudge
-                                ? "bg-gray-600 text-gray-300 cursor-not-allowed"
-                                : hasSubmitted
-                                ? "bg-green-200 text-green-800 cursor-not-allowed"
-                                : "bg-white text-black hover:bg-yellow-100 hover:scale-105 shadow-lg"
+                            onClick={submitCards}
+                            disabled={selectedCards.length !== (currentRound?.black_cards?.pick || 1)}
+                            className={`px-8 py-3 rounded-lg font-bold text-lg transition-all ${
+                              selectedCards.length === (currentRound?.black_cards?.pick || 1)
+                                ? "bg-green-600 hover:bg-green-500 text-white"
+                                : "bg-gray-600 text-gray-300 cursor-not-allowed"
                             }`}
                           >
-                            {card.white_cards?.text}
+                            {selectedCards.length === (currentRound?.black_cards?.pick || 1)
+                              ? `Submit ${selectedCards.length} Card${selectedCards.length > 1 ? 's' : ''}`
+                              : `Select ${(currentRound?.black_cards?.pick || 1) - selectedCards.length} more`
+                            }
                           </button>
-                        ))}
-                      </div>
+                        </div>
+                      )}
+                      
                       {hasSubmitted && !isJudge && (
                         <p className="text-green-400 text-center mt-4 text-lg font-bold">
-                          ✓ Card Submitted!
+                          ✓ Card{(currentRound?.black_cards?.pick || 1) > 1 ? 's' : ''} Submitted!
                         </p>
                       )}
                       {isJudge && (
@@ -1055,68 +1153,98 @@ export default function GamePage() {
                 </div>
 
                 {/* Submissions View - Visible to everyone */}
-                {currentRound && (
-                  <div className={`rounded-lg p-6 ${isJudge ? "bg-purple-900/30 border-2 border-purple-600" : "bg-zinc-800 border border-zinc-700"}`}>
-                    <div className="text-center mb-4">
-                      <h3 className={`text-2xl font-bold mb-2 ${isJudge ? "text-purple-200" : "text-zinc-200"}`}>
-                        {isJudge ? "⚖️ Judge's Choice" : "📋 Submitted Cards"}
-                      </h3>
-                      <p className={isJudge ? "text-purple-300" : "text-zinc-400"}>
-                        Submitted Cards: <span className="font-bold text-white">{submissions.length} / {nonJudgeCount}</span>
-                      </p>
-                    </div>
-                    {submissions.length === 0 ? (
-                      <div className="text-center py-8">
-                        <p className={`text-lg ${isJudge ? "text-purple-300" : "text-zinc-400"}`}>
-                          Waiting for players to submit cards...
+                {currentRound && (() => {
+                  const pickCount = currentRound?.black_cards?.pick || 1;
+                  
+                  // Group submissions by player
+                  const groupedSubmissions = submissions.reduce((acc, sub) => {
+                    if (!acc[sub.profile_id]) {
+                      acc[sub.profile_id] = [];
+                    }
+                    acc[sub.profile_id].push(sub);
+                    return acc;
+                  }, {});
+                  
+                  const uniquePlayersSubmitted = Object.keys(groupedSubmissions).length;
+                  const allPlayersSubmitted = uniquePlayersSubmitted === nonJudgeCount;
+                  
+                  return (
+                    <div className={`rounded-lg p-6 ${isJudge ? "bg-purple-900/30 border-2 border-purple-600" : "bg-zinc-800 border border-zinc-700"}`}>
+                      <div className="text-center mb-4">
+                        <h3 className={`text-2xl font-bold mb-2 ${isJudge ? "text-purple-200" : "text-zinc-200"}`}>
+                          {isJudge ? "⚖️ Judge's Choice" : "📋 Submitted Cards"}
+                        </h3>
+                        <p className={isJudge ? "text-purple-300" : "text-zinc-400"}>
+                          Players Submitted: <span className="font-bold text-white">{uniquePlayersSubmitted} / {nonJudgeCount}</span>
+                          {pickCount > 1 && <span className="text-yellow-400 ml-2">({pickCount} cards each)</span>}
                         </p>
                       </div>
-                    ) : (
-                      <div>
-                        {submissions.length < nonJudgeCount && (
-                          <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-3 mb-4 text-center">
-                            <p className="text-yellow-300 font-semibold">
-                              ⏳ {nonJudgeCount - submissions.length} more card(s) coming...
-                            </p>
-                          </div>
-                        )}
-                        {submissions.length === nonJudgeCount && (
-                          <div className={`rounded-lg p-4 mb-4 text-center ${isJudge ? "bg-green-900/30 border-2 border-green-500" : "bg-blue-900/30 border border-blue-500"}`}>
-                            <p className={`font-bold text-xl ${isJudge ? "text-green-300" : "text-blue-300"}`}>
-                              ✓ All cards submitted!
-                            </p>
-                            <p className={`text-lg mt-1 ${isJudge ? "text-green-200" : "text-blue-200"}`}>
-                              {isJudge ? "Click on your favorite card to choose the winner:" : "Waiting for judge to pick the winner..."}
-                            </p>
-                          </div>
-                        )}
-                        <div className="grid grid-cols-1 gap-4">
-                          {submissions.map((submission, index) => (
-                            <div
-                              key={submission.id}
-                              onClick={() => isJudge && selectWinner(submission.id)}
-                              className={`bg-white text-black p-5 rounded-lg text-left transition-all shadow-lg ${
-                                isJudge 
-                                  ? "hover:bg-yellow-100 hover:scale-105 border-2 border-transparent hover:border-yellow-500 hover:shadow-xl cursor-pointer" 
-                                  : "border-2 border-zinc-300 cursor-default"
-                              }`}
-                            >
-                              <div className="flex justify-between items-start mb-2">
-                                <div className="font-bold text-sm text-purple-600 bg-purple-100 px-2 py-1 rounded">
-                                  Card #{index + 1}
+                      {uniquePlayersSubmitted === 0 ? (
+                        <div className="text-center py-8">
+                          <p className={`text-lg ${isJudge ? "text-purple-300" : "text-zinc-400"}`}>
+                            Waiting for players to submit{pickCount > 1 ? ` ${pickCount} cards` : ''}...
+                          </p>
+                        </div>
+                      ) : (
+                        <div>
+                          {!allPlayersSubmitted && (
+                            <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-3 mb-4 text-center">
+                              <p className="text-yellow-300 font-semibold">
+                                ⏳ {nonJudgeCount - uniquePlayersSubmitted} more player(s) to submit...
+                              </p>
+                            </div>
+                          )}
+                          {allPlayersSubmitted && (
+                            <div className={`rounded-lg p-4 mb-4 text-center ${isJudge ? "bg-green-900/30 border-2 border-green-500" : "bg-blue-900/30 border border-blue-500"}`}>
+                              <p className={`font-bold text-xl ${isJudge ? "text-green-300" : "text-blue-300"}`}>
+                                ✓ All cards submitted!
+                              </p>
+                              <p className={`text-lg mt-1 ${isJudge ? "text-green-200" : "text-blue-200"}`}>
+                                {isJudge ? "Click on your favorite submission to choose the winner:" : "Waiting for judge to pick the winner..."}
+                              </p>
+                            </div>
+                          )}
+                          <div className="grid grid-cols-1 gap-4">
+                            {Object.entries(groupedSubmissions).map(([profileId, playerSubmissions], index) => (
+                              <div
+                                key={profileId}
+                                onClick={() => isJudge && selectWinner(playerSubmissions[0].id)}
+                                className={`bg-white text-black p-5 rounded-lg text-left transition-all shadow-lg ${
+                                  isJudge 
+                                    ? "hover:bg-yellow-100 hover:scale-105 border-2 border-transparent hover:border-yellow-500 hover:shadow-xl cursor-pointer" 
+                                    : "border-2 border-zinc-300 cursor-default"
+                                }`}
+                              >
+                                <div className="flex justify-between items-start mb-2">
+                                  <div className="font-bold text-sm text-purple-600 bg-purple-100 px-2 py-1 rounded">
+                                    Submission #{index + 1}
+                                  </div>
+                                  {isJudge && (
+                                    <div className="text-xs text-zinc-500">Click to select winner</div>
+                                  )}
                                 </div>
-                                {isJudge && (
-                                  <div className="text-xs text-zinc-500">Click to select winner</div>
+                                {pickCount === 1 ? (
+                                  <div className="text-lg font-medium">{playerSubmissions[0]?.white_cards?.text}</div>
+                                ) : (
+                                  <div className="space-y-2">
+                                    {playerSubmissions.map((sub, cardIndex) => (
+                                      <div key={sub.id} className="flex items-start gap-2">
+                                        <span className="bg-yellow-400 text-black text-xs font-bold px-2 py-1 rounded-full">
+                                          {cardIndex + 1}
+                                        </span>
+                                        <span className="text-lg font-medium">{sub.white_cards?.text}</span>
+                                      </div>
+                                    ))}
+                                  </div>
                                 )}
                               </div>
-                              <div className="text-lg font-medium">{submission.white_cards?.text}</div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                )}
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
