@@ -569,22 +569,6 @@ export default function GamePage() {
       // ========================================
       console.log("=== CARD REPLENISHMENT (judge browser only) ===");
       
-      // Get the current judge ID (the one who just finished judging)
-      const currentJudgeId = currentRound.judge_profile_id;
-      
-      // Count how many cards each player submitted this round
-      const { data: allSubmissions } = await supabase
-        .from("submissions")
-        .select("profile_id")
-        .eq("round_id", currentRound.id);
-      
-      const cardsSubmittedByPlayer = {};
-      (allSubmissions || []).forEach(sub => {
-        cardsSubmittedByPlayer[sub.profile_id] = (cardsSubmittedByPlayer[sub.profile_id] || 0) + 1;
-      });
-      
-      console.log("Cards submitted per player:", cardsSubmittedByPlayer);
-      
       // First, get ALL cards currently in ANY player's hand in this room
       const { data: allHandsInRoom } = await supabase
         .from("player_hands")
@@ -608,7 +592,7 @@ export default function GamePage() {
       const shuffledAvailable = [...availableCards].sort(() => Math.random() - 0.5);
       let cardIndex = 0;
       
-      // Replenish cards for ALL players (enforce exactly 10 cards each)
+      // Replenish cards for ALL players - ALWAYS ensure exactly 10 cards each
       for (const player of refreshedPlayers) {
         // Count current cards for this player
         const { data: currentCards } = await supabase
@@ -634,22 +618,20 @@ export default function GamePage() {
           continue; // Skip adding, they now have exactly 10
         }
         
-        // Skip the CURRENT judge - they didn't submit, should still have 10
-        if (player.profile_id === currentJudgeId) {
-          console.log(`${player.profiles?.username} (judge): has ${currentCount} cards, skipping (judge doesn't submit)`);
+        // Skip if already at exactly 10 cards
+        if (currentCount === 10) {
+          console.log(`${player.profiles?.username}: has exactly 10 cards, skipping`);
           continue;
         }
         
-        // Calculate how many cards to add based on what they submitted
-        const cardsSubmitted = cardsSubmittedByPlayer[player.profile_id] || 0;
-        const cardsToAdd = Math.min(cardsSubmitted, 10 - currentCount); // Don't exceed 10 total
+        // Calculate how many cards needed to reach 10
+        const cardsNeeded = 10 - currentCount;
+        console.log(`${player.profiles?.username}: has ${currentCount} cards, needs ${cardsNeeded} to reach 10`);
         
-        console.log(`${player.profiles?.username}: submitted ${cardsSubmitted} card(s), has ${currentCount} cards, will add ${cardsToAdd} card(s)`);
-        
-        // Only add cards if they submitted some and need cards
-        if (cardsToAdd > 0 && cardIndex < shuffledAvailable.length) {
+        // Add cards to reach exactly 10
+        if (cardsNeeded > 0 && cardIndex < shuffledAvailable.length) {
           let added = 0;
-          for (let i = 0; i < cardsToAdd && cardIndex < shuffledAvailable.length; i++) {
+          for (let i = 0; i < cardsNeeded && cardIndex < shuffledAvailable.length; i++) {
             const card = shuffledAvailable[cardIndex++];
             
             const { error: insertError } = await supabase
@@ -667,10 +649,10 @@ export default function GamePage() {
             }
           }
           console.log(`${player.profiles?.username}: +${added} card(s) (now has ${currentCount + added})`);
-        } else if (cardsToAdd <= 0) {
-          console.log(`${player.profiles?.username}: no cards to add (submitted ${cardsSubmitted}, has ${currentCount})`);
+        } else if (cardsNeeded <= 0) {
+          console.log(`${player.profiles?.username}: already at or above 10 cards`);
         } else {
-          console.log(`${player.profiles?.username}: no more available cards in deck!`);
+          console.log(`⚠️ ${player.profiles?.username}: no more available cards in deck!`);
         }
       }
       console.log("=== END CARD REPLENISHMENT ===");
