@@ -119,14 +119,32 @@ export default function GamePage() {
           setSubmissions([]);
         }
 
-        // Load player's hand
+        // Load player's hand - Get ALL cards to check for excess
         const { data: handData } = await supabase
           .from("player_hands")
           .select("*, white_cards(text)")
           .eq("room_id", roomId)
-          .eq("profile_id", user.id);
+          .eq("profile_id", user.id)
+          .order("id", { ascending: true });
         
-        if (handData) setPlayerHand(handData);
+        if (handData) {
+          // CRITICAL: If player has more than 10 cards, delete the excess immediately
+          if (handData.length > 10) {
+            console.warn(`⚠️ Player has ${handData.length} cards in DB, deleting ${handData.length - 10} excess cards`);
+            const excessCards = handData.slice(10);
+            for (const card of excessCards) {
+              await supabase
+                .from("player_hands")
+                .delete()
+                .eq("id", card.id);
+            }
+            console.log(`✅ Cleaned up ${excessCards.length} excess cards`);
+          }
+          
+          // Only use first 10 cards for display
+          const limitedHand = handData.slice(0, 10);
+          setPlayerHand(limitedHand);
+        }
       } else {
         // Game not playing - clear all game state
         setCurrentRound(null);
@@ -1157,7 +1175,7 @@ export default function GamePage() {
                   {playerHand.length > 0 ? (
                     <>
                       <h3 className="text-xl font-bold mb-4 text-center">
-                        Your Cards ({playerHand.length}/10)
+                        Your Cards (10/10)
                         {isJudge && <span className="text-purple-400 ml-2">(You are the Judge)</span>}
                       </h3>
                       
@@ -1171,7 +1189,7 @@ export default function GamePage() {
                       )}
                       
                       <div className="grid grid-cols-2 gap-3">
-                        {playerHand.map((card) => {
+                        {playerHand.slice(0, 10).map((card) => {
                           const isSelected = selectedCards.includes(card.white_card_id);
                           const pickCount = currentRound?.black_cards?.pick || 1;
                           
