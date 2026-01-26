@@ -629,9 +629,25 @@ export default function GamePage() {
         console.log(`${player.profiles?.username}: has ${currentCount} cards, needs ${cardsNeeded} to reach 10`);
         
         // Add cards to reach exactly 10
+        // CRITICAL: Re-check count before each card to prevent race conditions
         if (cardsNeeded > 0 && cardIndex < shuffledAvailable.length) {
           let added = 0;
           for (let i = 0; i < cardsNeeded && cardIndex < shuffledAvailable.length; i++) {
+            // Re-check count before adding each card (prevents race conditions)
+            const { data: checkCards } = await supabase
+              .from("player_hands")
+              .select("id")
+              .eq("room_id", roomId)
+              .eq("profile_id", player.profile_id);
+            
+            const checkCount = checkCards?.length || 0;
+            
+            // If already at or above 10, stop adding
+            if (checkCount >= 10) {
+              console.log(`${player.profiles?.username}: reached 10 cards (now has ${checkCount}), stopping`);
+              break;
+            }
+            
             const card = shuffledAvailable[cardIndex++];
             
             const { error: insertError } = await supabase
@@ -648,11 +664,39 @@ export default function GamePage() {
               console.log(`${player.profiles?.username}: failed to add card`, insertError.message);
             }
           }
-          console.log(`${player.profiles?.username}: +${added} card(s) (now has ${currentCount + added})`);
+          console.log(`${player.profiles?.username}: +${added} card(s)`);
         } else if (cardsNeeded <= 0) {
           console.log(`${player.profiles?.username}: already at or above 10 cards`);
         } else {
           console.log(`⚠️ ${player.profiles?.username}: no more available cards in deck!`);
+        }
+      }
+      
+      // FINAL VERIFICATION: Double-check all players have exactly 10 cards
+      console.log("=== FINAL CARD COUNT VERIFICATION ===");
+      for (const player of refreshedPlayers) {
+        const { data: finalCards } = await supabase
+          .from("player_hands")
+          .select("id")
+          .eq("room_id", roomId)
+          .eq("profile_id", player.profile_id);
+        
+        const finalCount = finalCards?.length || 0;
+        
+        if (finalCount > 10) {
+          console.log(`⚠️ ${player.profiles?.username}: FINAL COUNT = ${finalCount} (TOO MANY!) - removing ${finalCount - 10} excess`);
+          const excessCards = finalCards.slice(10);
+          for (const card of excessCards) {
+            await supabase
+              .from("player_hands")
+              .delete()
+              .eq("id", card.id);
+          }
+          console.log(`✅ ${player.profiles?.username}: fixed to exactly 10 cards`);
+        } else if (finalCount < 10) {
+          console.log(`⚠️ ${player.profiles?.username}: FINAL COUNT = ${finalCount} (TOO FEW!)`);
+        } else {
+          console.log(`✅ ${player.profiles?.username}: FINAL COUNT = 10 (correct)`);
         }
       }
       console.log("=== END CARD REPLENISHMENT ===");
