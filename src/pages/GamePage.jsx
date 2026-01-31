@@ -60,14 +60,31 @@ export default function GamePage() {
         .eq("id", roomId)
         .single();
       
-      if (roomError) {
+      if (roomError || !roomData) {
         console.error("Room load error:", roomError);
-        setError("Room not found");
+        setError("Room not found or has been closed");
         setLoading(false);
+        // Room was deleted - navigate away after a short delay
+        setTimeout(() => navigate("/"), 2000);
         return;
       }
       
-      if (roomData) setRoom(roomData);
+      setRoom(roomData);
+      
+      // Check if current user is still in the room
+      const { data: playerCheck } = await supabase
+        .from("room_players")
+        .select("profile_id")
+        .eq("room_id", roomId)
+        .eq("profile_id", user.id)
+        .single();
+      
+      if (!playerCheck) {
+        console.log("Player no longer in room - navigating away");
+        setError("You are no longer in this room");
+        setTimeout(() => navigate("/"), 2000);
+        return;
+      }
 
       // Load players (ordered by join time - this is player_order for judge rotation)
       const { data: playersData } = await supabase
@@ -167,6 +184,160 @@ export default function GamePage() {
       console.error("Load error:", err);
       setError("Failed to load game data");
       setLoading(false);
+    }
+  }
+
+  /**
+   * Leave the room
+   * - Remove player from room_players
+   * - If player is host and other players exist, transfer host to next player
+   * - If all players leave, close/delete the room and all associated data
+   */
+  async function leaveRoom() {
+    try {
+      if (!roomId || !user) return;
+
+      console.log("=== LEAVE ROOM ===");
+      console.log("User leaving:", user.id);
+      console.log("Room ID:", roomId);
+
+      // Get current room and players
+      const { data: currentRoom } = await supabase
+        .from("rooms")
+        .select("party_leader")
+        .eq("id", roomId)
+        .single();
+
+      const { data: allPlayers } = await supabase
+        .from("room_players")
+        .select("profile_id")
+        .eq("room_id", roomId);
+
+      const isHost = currentRoom?.party_leader === user.id;
+      const totalPlayers = allPlayers?.length || 0;
+
+      console.log("Is host:", isHost);
+      console.log("Total players:", totalPlayers);
+
+      // Remove player from room
+      const { error: removeError } = await supabase
+        .from("room_players")
+        .delete()
+        .eq("room_id", roomId)
+        .eq("profile_id", user.id);
+
+      if (removeError) {
+        console.error("Error removing player:", removeError);
+        throw new Error("Failed to leave room: " + removeError.message);
+      }
+
+      console.log("Player removed from room");
+
+      // If this was the last player, close the room
+      if (totalPlayers <= 1) {
+        console.log("Last player left - closing room");
+        
+        // Get all rounds for this room to delete their submissions
+        const { data: allRounds } = await supabase
+          .from("rounds")
+          .select("id")
+          .eq("room_id", roomId);
+        
+        if (allRounds && allRounds.length > 0) {
+          const roundIds = allRounds.map(r => r.id);
+          // Delete submissions for all rounds
+          for (const roundId of roundIds) {
+            await supabase.from("submissions").delete().eq("round_id", roundId);
+          }
+        }
+        
+        // Delete all game data for this room
+        await supabase.from("rounds").delete().eq("room_id", roomId);
+        await supabase.from("player_hands").delete().eq("room_id", roomId);
+        await supabase.from("messages").delete().eq("room_id", roomId);
+        
+        // Delete the room itself
+        const { error: roomDeleteError } = await supabase
+          .from("rooms")
+          .delete()
+          .eq("id", roomId);
+
+        if (roomDeleteError) {
+          console.error("Error deleting room:", roomDeleteError);
+        } else {
+          console.log("Room deleted and all game data cleaned up");
+        }
+      } else if (isHost) {
+        // Host left but other players remain - transfer host
+        console.log("Host left - transferring host to another player");
+        
+        // Get remaining players (ordered by join time)
+        const { data: remainingPlayers } = await supabase
+          .from("room_players")
+          .select("profile_id")
+          .eq("room_id", roomId)
+          .order("joined_at", { ascending: true })
+          .limit(1);
+
+        if (remainingPlayers && remainingPlayers.length > 0) {
+          const newHostId = remainingPlayers[0].profile_id;
+          console.log("New host:", newHostId);
+
+          // Get current room status
+          const { data: roomStatus } = await supabase
+            .from("rooms")
+            .select("status")
+            .eq("id", roomId)
+            .single();
+
+          // Transfer host and reset room to waiting if game was playing
+          const updateData = { party_leader: newHostId };
+          if (roomStatus?.status === "playing") {
+            updateData.status = "waiting";
+            console.log("Game was playing - resetting room to waiting status");
+            
+            // Clean up game data when resetting to waiting
+            // Get all rounds for this room to delete their submissions
+            const { data: allRounds } = await supabase
+              .from("rounds")
+              .select("id")
+              .eq("room_id", roomId);
+            
+            if (allRounds && allRounds.length > 0) {
+              const roundIds = allRounds.map(r => r.id);
+              for (const roundId of roundIds) {
+                await supabase.from("submissions").delete().eq("round_id", roundId);
+              }
+            }
+            
+            // Delete rounds, player hands, and reset scores
+            await supabase.from("rounds").delete().eq("room_id", roomId);
+            await supabase.from("player_hands").delete().eq("room_id", roomId);
+            await supabase.from("room_players").update({ score: 0, is_judge: false }).eq("room_id", roomId);
+            
+            console.log("Game data cleaned up - room ready for new game");
+          }
+
+          const { error: transferError } = await supabase
+            .from("rooms")
+            .update(updateData)
+            .eq("id", roomId);
+
+          if (transferError) {
+            console.error("Error transferring host:", transferError);
+          } else {
+            console.log("Host transferred successfully");
+          }
+        }
+      }
+
+      console.log("=== END LEAVE ROOM ===");
+      
+      // Navigate away
+      navigate("/");
+    } catch (err) {
+      console.error("Leave room error:", err);
+      setError("Failed to leave room: " + err.message);
     }
   }
 
@@ -1055,7 +1226,7 @@ export default function GamePage() {
               Refresh
             </button>
             <button
-              onClick={() => navigate("/")}
+              onClick={leaveRoom}
               className="px-3 py-1 bg-red-600 rounded hover:bg-red-500"
             >
               Leave
