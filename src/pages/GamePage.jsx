@@ -179,8 +179,8 @@ export default function GamePage() {
    */
   async function startGame() {
     try {
-      if (players.length < 3) {
-        setError("Need at least 3 players to start");
+      if (players.length < 2) {
+        setError("Need at least 2 players to start");
         return;
       }
 
@@ -1116,18 +1116,18 @@ export default function GamePage() {
             {room.status === "waiting" ? (
               <div className="text-center py-12">
                 <h2 className="text-2xl font-bold mb-4">Waiting for Game</h2>
-                <p className="text-zinc-400 mb-6">Need at least 3 players to start</p>
+                <p className="text-zinc-400 mb-6">Need at least 2 players to start</p>
                 {isHost && (
                   <button
                     onClick={startGame}
-                    disabled={players.length < 3}
+                    disabled={players.length < 2}
                     className={`px-6 py-3 rounded-lg font-bold ${
-                      players.length >= 3
+                      players.length >= 2
                         ? "bg-green-600 hover:bg-green-500"
                         : "bg-gray-600 cursor-not-allowed opacity-50"
                     }`}
                   >
-                    {players.length >= 3 ? "Start Game" : `Need ${3 - players.length} more players`}
+                    {players.length >= 2 ? "Start Game" : `Need ${2 - players.length} more player${2 - players.length > 1 ? 's' : ''}`}
                   </button>
                 )}
               </div>
