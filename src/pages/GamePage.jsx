@@ -3,6 +3,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../auth/AuthProvider";
 
+/** Minimum players required in the room to start the game */
+const MIN_PLAYERS_TO_START = 2;
+
 /**
  * GamePage - Cards Against Humanity Game Room
  * 
@@ -179,8 +182,8 @@ export default function GamePage() {
    */
   async function startGame() {
     try {
-      if (players.length < 3) {
-        setError("Need at least 3 players to start");
+      if (players.length < MIN_PLAYERS_TO_START) {
+        setError(`Need at least ${MIN_PLAYERS_TO_START} players to start`);
         return;
       }
 
@@ -1116,18 +1119,18 @@ export default function GamePage() {
             {room.status === "waiting" ? (
               <div className="text-center py-12">
                 <h2 className="text-2xl font-bold mb-4">Waiting for Game</h2>
-                <p className="text-zinc-400 mb-6">Need at least 3 players to start</p>
+                <p className="text-zinc-400 mb-6">Need at least {MIN_PLAYERS_TO_START} players to start</p>
                 {isHost && (
                   <button
                     onClick={startGame}
-                    disabled={players.length < 3}
+                    disabled={players.length < MIN_PLAYERS_TO_START}
                     className={`px-6 py-3 rounded-lg font-bold ${
-                      players.length >= 3
+                      players.length >= MIN_PLAYERS_TO_START
                         ? "bg-green-600 hover:bg-green-500"
                         : "bg-gray-600 cursor-not-allowed opacity-50"
                     }`}
                   >
-                    {players.length >= 3 ? "Start Game" : `Need ${3 - players.length} more players`}
+                    {players.length >= MIN_PLAYERS_TO_START ? "Start Game" : `Need ${MIN_PLAYERS_TO_START - players.length} more player${players.length === 1 ? '' : 's'}`}
                   </button>
                 )}
               </div>
@@ -1176,7 +1179,6 @@ export default function GamePage() {
                     <>
                       <h3 className="text-xl font-bold mb-4 text-center">
                         Your Cards (10/10)
-                        {isJudge && <span className="text-purple-400 ml-2">(You are the Judge)</span>}
                       </h3>
                       
                       {/* Selection info for multi-pick cards */}
@@ -1244,11 +1246,6 @@ export default function GamePage() {
                           ✓ Card{(currentRound?.black_cards?.pick || 1) > 1 ? 's' : ''} Submitted!
                         </p>
                       )}
-                      {isJudge && (
-                        <p className="text-purple-400 text-center mt-4 text-lg">
-                          You are judging this round - wait for submissions
-                        </p>
-                      )}
                     </>
                   ) : (
                     <div className="text-center py-8">
@@ -1274,19 +1271,19 @@ export default function GamePage() {
                   const allPlayersSubmitted = uniquePlayersSubmitted === nonJudgeCount;
                   
                   return (
-                    <div className={`rounded-lg p-6 ${isJudge ? "bg-purple-900/30 border-2 border-purple-600" : "bg-zinc-800 border border-zinc-700"}`}>
+                    <div className="rounded-lg p-6 bg-zinc-800 border border-zinc-700">
                       <div className="text-center mb-4">
-                        <h3 className={`text-2xl font-bold mb-2 ${isJudge ? "text-purple-200" : "text-zinc-200"}`}>
-                          {isJudge ? "⚖️ Judge's Choice" : "📋 Submitted Cards"}
+                        <h3 className="text-2xl font-bold mb-2 text-zinc-200">
+                          Submitted Cards
                         </h3>
-                        <p className={isJudge ? "text-purple-300" : "text-zinc-400"}>
+                        <p className="text-zinc-400">
                           Players Submitted: <span className="font-bold text-white">{uniquePlayersSubmitted} / {nonJudgeCount}</span>
                           {pickCount > 1 && <span className="text-yellow-400 ml-2">({pickCount} cards each)</span>}
                         </p>
                       </div>
                       {uniquePlayersSubmitted === 0 ? (
                         <div className="text-center py-8">
-                          <p className={`text-lg ${isJudge ? "text-purple-300" : "text-zinc-400"}`}>
+                          <p className="text-lg text-zinc-400">
                             Waiting for players to submit{pickCount > 1 ? ` ${pickCount} cards` : ''}...
                           </p>
                         </div>
@@ -1300,12 +1297,12 @@ export default function GamePage() {
                             </div>
                           )}
                           {allPlayersSubmitted && (
-                            <div className={`rounded-lg p-4 mb-4 text-center ${isJudge ? "bg-green-900/30 border-2 border-green-500" : "bg-blue-900/30 border border-blue-500"}`}>
-                              <p className={`font-bold text-xl ${isJudge ? "text-green-300" : "text-blue-300"}`}>
+                            <div className="rounded-lg p-4 mb-4 text-center bg-blue-900/30 border border-blue-500">
+                              <p className="font-bold text-xl text-blue-300">
                                 ✓ All cards submitted!
                               </p>
-                              <p className={`text-lg mt-1 ${isJudge ? "text-green-200" : "text-blue-200"}`}>
-                                {isJudge ? "Click on your favorite submission to choose the winner:" : "Waiting for judge to pick the winner..."}
+                              <p className="text-lg mt-1 text-blue-200">
+                                The judge chooses the winner.
                               </p>
                             </div>
                           )}
@@ -1314,19 +1311,16 @@ export default function GamePage() {
                               <div
                                 key={profileId}
                                 onClick={() => isJudge && selectWinner(playerSubmissions[0].id)}
-                                className={`bg-white text-black p-5 rounded-lg text-left transition-all shadow-lg ${
-                                  isJudge 
-                                    ? "hover:bg-yellow-100 hover:scale-105 border-2 border-transparent hover:border-yellow-500 hover:shadow-xl cursor-pointer" 
-                                    : "border-2 border-zinc-300 cursor-default"
+                                className={`bg-white text-black p-5 rounded-lg text-left transition-all shadow-lg border-2 border-zinc-300 ${
+                                  isJudge
+                                    ? "hover:bg-yellow-100 hover:scale-105 hover:border-yellow-500 hover:shadow-xl cursor-pointer"
+                                    : "cursor-default"
                                 }`}
                               >
                                 <div className="flex justify-between items-start mb-2">
                                   <div className="font-bold text-sm text-purple-600 bg-purple-100 px-2 py-1 rounded">
                                     Submission #{index + 1}
                                   </div>
-                                  {isJudge && (
-                                    <div className="text-xs text-zinc-500">Click to select winner</div>
-                                  )}
                                 </div>
                                 {pickCount === 1 ? (
                                   <div className="text-lg font-medium">{playerSubmissions[0]?.white_cards?.text}</div>
